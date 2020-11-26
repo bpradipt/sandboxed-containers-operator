@@ -22,28 +22,25 @@ type updateStatus = func(a *kataTypes.KataConfigStatus)
 
 func updateKataConfigStatus(kataClient client.Client, kataConfigResourceName string, us updateStatus) (err error) {
 	var kataConfig kataTypes.KataConfig
-	attempts := 5
-	for i := 0; i < attempts; i++ {
-		err = kataClient.Get(context.Background(), client.ObjectKey{
-			Name: kataConfigResourceName,
-		}, &kataConfig)
 
+	return wait.Poll(2*time.Second, 2*time.Minute, func() (bool, error) {
+		err := kataClient.Get(context.Background(), client.ObjectKey{Name: kataConfigResourceName}, &kataConfig)
 		if err != nil {
-			continue // Error, let's attempt to get the object again. TODO - maybe check error type and decide?
+			if client.IgnoreNotFound(err) != nil {
+				return false, errors.Wrapf(err, "Unable to get KataConfig %q", kataConfigResourceName)
+			}
+			return false, nil
 		}
 
 		us(&kataConfig.Status)
 
 		err = kataClient.Status().Update(context.Background(), &kataConfig)
-
-		if err == nil {
-			break
+		if err != nil {
+			return false, nil
 		}
 
-		time.Sleep(5 * time.Second)
-	}
-
-	return err
+		return true, nil
+	})
 }
 
 func getFailedNode(err error) (fn kataTypes.FailedNodeStatus, retErr error) {
