@@ -5,4 +5,4 @@ metadata:
   namespace: kata-operator-system
 data:
   # change to your custom payload repository:tag value
-  daemon.payload: quay.io/user/repository:test
+  daemon.payload: quay.io/isolatedcontainers/kata-operator-payload:4.8

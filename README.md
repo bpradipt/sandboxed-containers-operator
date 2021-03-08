@@ -35,7 +35,7 @@ An operator to perform lifecycle management (install/upgrade/uninstall) of [Kata
 1. Make sure that `oc` is configured to talk to the cluster
 
 2. To deploy the operator and create a custom resource (which installs Kata on all worker nodes), run
-   ``` curl https://raw.githubusercontent.com/openshift/sandboxed-containers-operator/master/deploy/install.sh | bash ```
+   ``` curl https://raw.githubusercontent.com/bpradipt/kata-operator/master/deploy/install.sh | bash ```
 
   This will create all necessary resources, deploy the sandboxed-containers-operator and also create a custom resource.
   See deploy/deploy.sh and deploy/deployment.yaml for details.
