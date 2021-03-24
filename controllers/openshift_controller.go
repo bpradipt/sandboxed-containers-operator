@@ -17,12 +17,9 @@ limitations under the License.
 package controllers
 
 import (
-	"bytes"
 	"context"
-	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
-	"text/template"
 	"time"
 
 	ignTypes "github.com/coreos/ignition/config/v2_2/types"
@@ -279,19 +276,6 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() *mcfgv1.MachineConfigPool 
 }
 
 func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.MachineConfig, error) {
-	isenabled := true
-	name := "kata-osbuilder-generate.service"
-	content := `
-[Unit]
-Description=Hacky service to enable kata-osbuilder-generate.service
-ConditionPathExists=/usr/lib/systemd/system/kata-osbuilder-generate.service
-[Service]
-Type=oneshot
-ExecStart=/usr/libexec/kata-containers/osbuilder/kata-osbuilder.sh
-ExecRestart=/usr/libexec/kata-containers/osbuilder/kata-osbuilder.sh
-[Install]
-WantedBy=multi-user.target
-`
 
 	kataOC, err := r.kataOcExists()
 	if err != nil {
@@ -306,32 +290,11 @@ WantedBy=multi-user.target
 		r.Log.Error(err, "no valid role for mc found")
 	}
 
-	file := ignTypes.File{}
-	c := ignTypes.FileContents{}
-
-	dropinConf, err := generateDropinConfig(r.kataConfig.Status.RuntimeClass)
-	if err != nil {
-		return nil, err
-	}
-
-	c.Source = "data:text/plain;charset=utf-8;base64," + dropinConf
-	file.Contents = c
-	file.Filesystem = "root"
-	m := 420
-	file.Mode = &m
-	file.Path = "/etc/crio/crio.conf.d/50-kata.conf"
-
 	ic := ignTypes.Config{
 		Ignition: ignTypes.Ignition{
 			Version: "2.2.0",
 		},
-		Systemd: ignTypes.Systemd{
-			Units: []ignTypes.Unit{
-				{Name: name, Enabled: &isenabled, Contents: content},
-			},
-		},
 	}
-	ic.Storage.Files = []ignTypes.File{file}
 
 	icb, err := json.Marshal(ic)
 	if err != nil {
@@ -343,14 +306,6 @@ WantedBy=multi-user.target
 			APIVersion: "machineconfiguration.openshift.io/v1",
 			Kind:       "MachineConfig",
 		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "50-kata-crio-dropin",
-			Labels: map[string]string{
-				"machineconfiguration.openshift.io/role": machinePool,
-				"app":                                    r.kataConfig.Name,
-			},
-			Namespace: "sandboxed-containers-operator",
-		},
 		Spec: mcfgv1.MachineConfigSpec{
 			Config: runtime.RawExtension{
 				Raw: icb,
@@ -359,37 +314,6 @@ WantedBy=multi-user.target
 	}
 
 	return &mc, nil
-}
-
-func generateDropinConfig(handlerName string) (string, error) {
-	var err error
-	buf := new(bytes.Buffer)
-	type RuntimeConfig struct {
-		RuntimeName string
-	}
-	const b = `
-[crio.runtime]
-  manage_ns_lifecycle = true
-
-[crio.runtime.runtimes.{{.RuntimeName}}]
-  runtime_path = "/usr/bin/containerd-shim-kata-v2"
-  runtime_type = "vm"
-  runtime_root = "/run/vc"
-  privileged_without_host_devices = true
-  
-[crio.runtime.runtimes.runc]
-  runtime_path = ""
-  runtime_type = "oci"
-  runtime_root = "/run/runc"
-`
-	c := RuntimeConfig{RuntimeName: "kata"}
-	t := template.Must(template.New("test").Parse(b))
-	err = t.Execute(buf, c)
-	if err != nil {
-		return "", err
-	}
-	sEnc := b64.StdEncoding.EncodeToString([]byte(buf.String()))
-	return sEnc, err
 }
 
 func (r *KataConfigOpenShiftReconciler) addFinalizer() error {
