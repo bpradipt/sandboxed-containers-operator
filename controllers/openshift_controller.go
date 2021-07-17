@@ -122,11 +122,19 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() *mcfgv1.MachineConfigPool 
 		Values:   []string{"kata-oc", "worker"},
 	}
 
-	var nodeSelector *metav1.LabelSelector
+	nodeSelector := metav1.AddLabelToSelector(&metav1.LabelSelector{}, "feature.node.kubernetes.io/runtime.kata", "true")
 
 	if r.kataConfig.Spec.KataConfigPoolSelector != nil {
-		nodeSelector = r.kataConfig.Spec.KataConfigPoolSelector
+		// KataConfigPoolSelector can be a MatchExpression or MatchLabel. Need to Convert MatchExpression to MatchLabel
+		lsMap, err := metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
+		if err != nil {
+			r.Log.Error(err, "Unable to parse KataConfigPoolSelector")
+		}
+		// Add runtime.kata label
+		lsMap["feature.node.kubernetes.io/runtime.kata"] = "true"
+		nodeSelector = metav1.SetAsLabelSelector(lsMap)
 	}
+	r.Log.Info("NodeSelector: ", "nodeSelector", nodeSelector)
 
 	mcp := &mcfgv1.MachineConfigPool{
 		TypeMeta: metav1.TypeMeta{
@@ -156,8 +164,6 @@ func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.
 
 	if kataOC {
 		machinePool = "kata-oc"
-	} else if _, ok := r.kataConfig.Spec.KataConfigPoolSelector.MatchLabels["node-role.kubernetes.io/"+machinePool]; !ok {
-		r.Log.Error(err, "no valid role for MachineConfig found")
 	}
 
 	ic := ignTypes.Config{
@@ -241,30 +247,13 @@ func (r *KataConfigOpenShiftReconciler) kataOcExists() (bool, error) {
 
 func (r *KataConfigOpenShiftReconciler) getMcpName() (string, error) {
 	r.Log.Info("Getting MachineConfigPool Name")
-	var mcpName string
 
 	kataOC, err := r.kataOcExists()
 	if kataOC && err == nil {
 		r.Log.Info("kata-oc MachineConfigPool exists")
 		return "kata-oc", nil
 	}
-
-	workerMcp := &mcfgv1.MachineConfigPool{}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "worker"}, workerMcp)
-	if err != nil && k8serrors.IsNotFound(err) {
-		r.Log.Error(err, "No worker MachineConfigPool found!")
-		return "", err
-	} else if err != nil {
-		r.Log.Error(err, "Could not get the worker MachineConfigPool!")
-		return "", err
-	}
-
-	if workerMcp.Status.MachineCount > 0 {
-		mcpName = "worker"
-	} else {
-		mcpName = "master"
-	}
-	return mcpName, nil
+	return "", err
 }
 
 func (r *KataConfigOpenShiftReconciler) setRuntimeClass() (ctrl.Result, error) {
@@ -290,16 +279,21 @@ func (r *KataConfigOpenShiftReconciler) setRuntimeClass() (ctrl.Result, error) {
 			},
 		}
 
+		nodeSelector := map[string]string{"feature.node.kubernetes.io/runtime.kata": "true"}
+
 		if r.kataConfig.Spec.KataConfigPoolSelector != nil {
 			r.Log.Info("KataConfigPoolSelector:", "r.kataConfig.Spec.KataConfigPoolSelector", r.kataConfig.Spec.KataConfigPoolSelector)
 			nodeSelector, err := metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
 			if err != nil {
 				r.Log.Error(err, "Unable to get nodeSelector for runtimeClass")
 			}
-			rc.Scheduling = &nodeapi.Scheduling{
-				NodeSelector: nodeSelector,
-			}
+			nodeSelector["feature.node.kubernetes.io/runtime.kata"] = "true"
 		}
+
+		rc.Scheduling = &nodeapi.Scheduling{
+			NodeSelector: nodeSelector,
+		}
+		r.Log.Info("RuntimeClass NodeSelector:", "nodeSelector", nodeSelector)
 		return rc
 	}()
 
@@ -361,12 +355,6 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 					return ctrl.Result{}, updErr
 				}
 			}
-		}
-	}
-
-	if r.kataConfig.Spec.KataConfigPoolSelector == nil {
-		r.kataConfig.Spec.KataConfigPoolSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{"node-role.kubernetes.io/" + machinePool: ""},
 		}
 	}
 
@@ -454,39 +442,29 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 		r.Log.Info("SCNodeRole is: " + machinePool)
 	}
 
-	if r.kataConfig.Spec.KataConfigPoolSelector == nil {
-		r.kataConfig.Spec.KataConfigPoolSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{"node-role.kubernetes.io/" + machinePool: ""},
-		}
-	}
+	r.Log.Info("Creating new MachineConfigPool")
+	mcp := r.newMCPforCR()
 
-	/* create custom Machine Config Pool if configured by user */
-	if _, ok := r.kataConfig.Spec.KataConfigPoolSelector.MatchLabels["node-role.kubernetes.io/"+machinePool]; !ok {
-		r.Log.Info("Creating new MachineConfigPool")
-		mcp := r.newMCPforCR()
-
-		foundMcp := &mcfgv1.MachineConfigPool{}
-		err := r.Client.Get(context.TODO(), types.NamespacedName{Name: mcp.Name}, foundMcp)
-		if err != nil && k8serrors.IsNotFound(err) {
-			r.Log.Info("Creating a new MachineConfigPool ", "mcp.Name", mcp.Name)
-			err = r.Client.Create(context.TODO(), mcp)
-			if err != nil {
-				r.Log.Error(err, "Error in creating new MachineConfigPool ", "mcp.Name", mcp.Name)
-				return ctrl.Result{}, err
-			}
-			// mcp created successfully - requeue to check the status later
-			return ctrl.Result{Requeue: true, RequeueAfter: 20 * time.Second}, nil
-		} else if err != nil {
-			r.Log.Error(err, "Error in retreiving MachineConfigPool ", "mcp.Name", mcp.Name)
+	foundMcp := &mcfgv1.MachineConfigPool{}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: mcp.Name}, foundMcp)
+	if err != nil && k8serrors.IsNotFound(err) {
+		r.Log.Info("Creating a new MachineConfigPool ", "mcp.Name", mcp.Name)
+		err = r.Client.Create(context.TODO(), mcp)
+		if err != nil {
+			r.Log.Error(err, "Error in creating new MachineConfigPool ", "mcp.Name", mcp.Name)
 			return ctrl.Result{}, err
 		}
+		// mcp created successfully - requeue to check the status later
+		return ctrl.Result{Requeue: true, RequeueAfter: 20 * time.Second}, nil
+	} else if err != nil {
+		r.Log.Error(err, "Error in retreiving MachineConfigPool ", "mcp.Name", mcp.Name)
+		return ctrl.Result{}, err
+	}
 
-		// Wait till MCP is ready
-		if foundMcp.Status.MachineCount == 0 {
-			r.Log.Info("Waiting till MachineConfigPool is initialized ", "mcp.Name", mcp.Name)
-			return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, nil
-		}
-
+	// Wait till MCP is ready
+	if foundMcp.Status.MachineCount == 0 {
+		r.Log.Info("Waiting till MachineConfigPool is initialized ", "mcp.Name", mcp.Name)
+		return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, nil
 	}
 
 	doReconcile, err, isMcCreated := r.createExtensionMc(machinePool)
