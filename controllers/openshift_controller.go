@@ -400,8 +400,33 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 		return result, err2
 	}
 
+	wMcp := &mcfgv1.MachineConfigPool{}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "worker"}, wMcp)
+	if err != nil {
+		r.Log.Error(err, "Unable to get MachineConfigPool - worker")
+		return ctrl.Result{}, err
+	}
+
 	if workerMcp.Status.ReadyMachineCount != workerMcp.Status.MachineCount {
 		return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, nil
+	}
+
+	// Sleep for MCP to reflect the changes
+	r.Log.Info("Pausing for a minute to make sure worker mcp has started syncing up")
+	time.Sleep(60 * time.Second)
+
+	// At this time the kata-oc MCP is updated. However the worker MCP might still be in Updating state
+	// We'll need to wait for the worker MCP to complete Updating before deletion
+	r.Log.Info("Wait till worker MCP has updated")
+	if (wMcp.Status.ReadyMachineCount != wMcp.Status.MachineCount) &&
+		mcfgv1.IsMachineConfigPoolConditionTrue(wMcp.Status.Conditions, mcfgv1.MachineConfigPoolUpdating) {
+		return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, nil
+	}
+
+	err = r.Client.Delete(context.TODO(), workerMcp)
+	if err != nil {
+		r.Log.Error(err, "Unable to delete kata-oc MachineConfigPool")
+		return ctrl.Result{}, err
 	}
 
 	r.kataConfig.Status.UnInstallationStatus.InProgress.IsInProgress = corev1.ConditionFalse
@@ -417,6 +442,7 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 	}
 
 	r.Log.Info("Uninstallation completed. Proceeding with the KataConfig deletion")
+
 	controllerutil.RemoveFinalizer(r.kataConfig, kataConfigFinalizer)
 
 	err = r.Client.Update(context.TODO(), r.kataConfig)
@@ -424,6 +450,7 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 		r.Log.Error(err, "Unable to update KataConfig")
 		return ctrl.Result{}, err
 	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -645,6 +672,40 @@ func (r *KataConfigOpenShiftReconciler) getNodes() (error, *corev1.NodeList) {
 	return nil, nodes
 }
 
+func (r *KataConfigOpenShiftReconciler) unlabelNode(node *corev1.Node) {
+	var err error
+	var lsMap map[string]string
+
+	if r.kataConfig.Spec.KataConfigPoolSelector != nil {
+		// KataConfigPoolSelector can be a MatchExpression or MatchLabel. Need to Convert MatchExpression to MatchLabel
+		lsMap, err = metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
+		if err != nil {
+			r.Log.Error(err, "Unable to parse KataConfigPoolSelector")
+		}
+
+	}
+
+	// Delete runtime.kata label
+	delete(node.Labels, "feature.node.kubernetes.io/runtime.kata")
+
+	for k := range lsMap {
+		if node.Labels == nil || len(node.Labels[k]) == 0 {
+			break
+		}
+		delete(node.Labels, k)
+	}
+	err = r.Client.Update(context.TODO(), node)
+	if err != nil {
+		if !k8serrors.IsConflict(err) {
+			r.Log.Error(err, "Error when removing labels %v from %v ", lsMap, node)
+			return
+		} else {
+			r.Log.Info("Conflict when trying to remove labels %v from %v", lsMap, node)
+		}
+	}
+
+}
+
 func (r *KataConfigOpenShiftReconciler) getConditionReason(conditions []mcfgv1.MachineConfigPoolCondition, conditionType mcfgv1.MachineConfigPoolConditionType) string {
 	for _, c := range conditions {
 		if c.Type == conditionType {
@@ -714,6 +775,8 @@ func (r *KataConfigOpenShiftReconciler) updateUninstallStatus() (error, bool) {
 			case "Done":
 				err, r.kataConfig.Status.UnInstallationStatus.Completed =
 					r.updateCompletedNodes(&node, r.kataConfig.Status.UnInstallationStatus.Completed)
+				// Unlabel the Node
+				r.unlabelNode(&node)
 			case "Degraded":
 				err, r.kataConfig.Status.UnInstallationStatus.Failed.FailedNodesList =
 					r.updateFailedNodes(&node, r.kataConfig.Status.UnInstallationStatus.Failed.FailedNodesList)
