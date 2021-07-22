@@ -123,6 +123,7 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() *mcfgv1.MachineConfigPool 
 	}
 
 	nodeSelector := metav1.AddLabelToSelector(&metav1.LabelSelector{}, "feature.node.kubernetes.io/runtime.kata", "true")
+	mcpNodeSelector := metav1.CloneSelectorAndAddLabel(nodeSelector, "feature.node.kubernetes.io/kata-oc", "true")
 
 	if r.kataConfig.Spec.KataConfigPoolSelector != nil {
 		// KataConfigPoolSelector can be a MatchExpression or MatchLabel. Need to Convert MatchExpression to MatchLabel
@@ -133,8 +134,11 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() *mcfgv1.MachineConfigPool 
 		// Add runtime.kata label
 		lsMap["feature.node.kubernetes.io/runtime.kata"] = "true"
 		nodeSelector = metav1.SetAsLabelSelector(lsMap)
+		lsMap["feature.node.kubernetes.io/kata-oc"] = "true"
+		mcpNodeSelector = metav1.SetAsLabelSelector(lsMap)
 	}
 	r.Log.Info("NodeSelector: ", "nodeSelector", nodeSelector)
+	r.Log.Info("mcpNodeSelector: ", "mcpNodeSelector", mcpNodeSelector)
 
 	mcp := &mcfgv1.MachineConfigPool{
 		TypeMeta: metav1.TypeMeta{
@@ -148,10 +152,11 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() *mcfgv1.MachineConfigPool 
 			MachineConfigSelector: &metav1.LabelSelector{
 				MatchExpressions: []metav1.LabelSelectorRequirement{lsr},
 			},
-			NodeSelector: nodeSelector,
+			NodeSelector: mcpNodeSelector,
 		},
 	}
 
+	r.labelNode(nodeSelector)
 	return mcp
 }
 
@@ -672,35 +677,84 @@ func (r *KataConfigOpenShiftReconciler) getNodes() (error, *corev1.NodeList) {
 	return nil, nodes
 }
 
+func (r *KataConfigOpenShiftReconciler) labelNode(nodeSelector *metav1.LabelSelector) {
+
+	var err error
+	/*
+	   var labels = map[string]string{
+	       "feature.node.kubernetes.io/pool": "kata-oc",
+	     }
+	     // Select all nodes with the nodeSelector
+	     // Add label
+
+	    tokens := make([]string, 0, len(labels))
+	   for k, v := range labels {
+	       tokens = append(tokens, "\""+k+"\":\""+v+"\"")
+	   }
+	   labelString := "{" + strings.Join(tokens, ",") + "}"
+	   patch := fmt.Sprintf(`{"metadata":{"labels":%v}}`, labelString)
+
+	*/
+
+       	labelSelector, _ := metav1.LabelSelectorAsSelector(nodeSelector)
+	nodeList := &corev1.NodeList{}
+	listOpts := []client.ListOption{
+		client.MatchingLabelsSelector{Selector: labelSelector},
+	}
+
+	if err := r.Client.List(context.TODO(), nodeList, listOpts...); err != nil {
+		r.Log.Error(err, "Getting list of nodes failed")
+		return
+	}
+
+	for _, node := range nodeList.Items {
+		node.Labels["feature.node.kubernetes.io/kata-oc"] = "true"
+		err = r.Client.Update(context.TODO(), &node)
+		if err != nil {
+			if !k8serrors.IsConflict(err) {
+				r.Log.Error(err, "Error when adding labels to node", "node", node)
+			} else {
+				r.Log.Info("Conflict when adding labels to node: ", "node", node)
+			}
+		}
+
+	}
+
+}
+
 func (r *KataConfigOpenShiftReconciler) unlabelNode(node *corev1.Node) {
 	var err error
 	var lsMap map[string]string
+	/*
 
-	if r.kataConfig.Spec.KataConfigPoolSelector != nil {
-		// KataConfigPoolSelector can be a MatchExpression or MatchLabel. Need to Convert MatchExpression to MatchLabel
-		lsMap, err = metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
-		if err != nil {
-			r.Log.Error(err, "Unable to parse KataConfigPoolSelector")
+		if r.kataConfig.Spec.KataConfigPoolSelector != nil {
+			// KataConfigPoolSelector can be a MatchExpression or MatchLabel. Need to Convert MatchExpression to MatchLabel
+			lsMap, err = metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
+			if err != nil {
+				r.Log.Error(err, "Unable to parse KataConfigPoolSelector")
+			}
+
 		}
 
-	}
+		// Delete runtime.kata label
+		delete(node.Labels, "feature.node.kubernetes.io/runtime.kata")
 
-	// Delete runtime.kata label
-	delete(node.Labels, "feature.node.kubernetes.io/runtime.kata")
-
-	for k := range lsMap {
-		if node.Labels == nil || len(node.Labels[k]) == 0 {
-			break
+		for k := range lsMap {
+			if node.Labels == nil || len(node.Labels[k]) == 0 {
+				break
+			}
+			delete(node.Labels, k)
 		}
-		delete(node.Labels, k)
-	}
+	*/
+
+	delete(node.Labels, "feature.node.kubernetes.io/kata-oc")
 	err = r.Client.Update(context.TODO(), node)
 	if err != nil {
 		if !k8serrors.IsConflict(err) {
-			r.Log.Error(err, "Error when removing labels %v from %v ", lsMap, node)
+			r.Log.Error(err, "Error when removing labels from node: ", "node", node)
 			return
 		} else {
-			r.Log.Info("Conflict when trying to remove labels %v from %v", lsMap, node)
+			r.Log.Info("Conflict when trying to remove labels from node: ", "node", node)
 		}
 	}
 
