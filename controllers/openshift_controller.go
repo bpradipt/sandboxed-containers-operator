@@ -433,8 +433,12 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 
 	err = r.Client.Update(context.TODO(), r.kataConfig)
 	if err != nil {
-		r.Log.Error(err, "Unable to update KataConfig")
-		return ctrl.Result{}, err
+		if k8serrors.IsConflict(err) {
+			return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, nil
+		} else {
+			r.Log.Error(err, "Unable to update KataConfig")
+			return ctrl.Result{}, err
+		}
 	}
 	return ctrl.Result{}, nil
 }
@@ -449,7 +453,11 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 	// Add finalizer for this CR
 	if !contains(r.kataConfig.GetFinalizers(), kataConfigFinalizer) {
 		if err := r.addFinalizer(); err != nil {
-			return ctrl.Result{}, err
+			if k8serrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, nil
+			} else {
+				return ctrl.Result{}, err
+			}
 		}
 		r.Log.Info("SCNodeRole is: " + machinePool)
 	}
