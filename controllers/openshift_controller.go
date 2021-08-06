@@ -115,7 +115,7 @@ func (r *KataConfigOpenShiftReconciler) Reconcile(req ctrl.Request) (ctrl.Result
 	}()
 }
 
-func (r *KataConfigOpenShiftReconciler) newMCPforCR() *mcfgv1.MachineConfigPool {
+func (r *KataConfigOpenShiftReconciler) newMCPforCR() (*mcfgv1.MachineConfigPool, error) {
 	lsr := metav1.LabelSelectorRequirement{
 		Key:      "machineconfiguration.openshift.io/role",
 		Operator: metav1.LabelSelectorOpIn,
@@ -156,8 +156,8 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() *mcfgv1.MachineConfigPool 
 		},
 	}
 
-	r.labelNode(nodeSelector)
-	return mcp
+	err := r.labelNode(nodeSelector)
+	return mcp, err
 }
 
 func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.MachineConfig, error) {
@@ -475,7 +475,7 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 	}
 
 	r.Log.Info("Creating new MachineConfigPool")
-	mcp := r.newMCPforCR()
+	mcp, _ := r.newMCPforCR()
 
 	foundMcp := &mcfgv1.MachineConfigPool{}
 	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: mcp.Name}, foundMcp)
@@ -677,25 +677,7 @@ func (r *KataConfigOpenShiftReconciler) getNodes() (error, *corev1.NodeList) {
 	return nil, nodes
 }
 
-func (r *KataConfigOpenShiftReconciler) labelNode(nodeSelector *metav1.LabelSelector) {
-
-	var err error
-	/*
-	   var labels = map[string]string{
-	       "feature.node.kubernetes.io/pool": "kata-oc",
-	     }
-	     // Select all nodes with the nodeSelector
-	     // Add label
-
-	    tokens := make([]string, 0, len(labels))
-	   for k, v := range labels {
-	       tokens = append(tokens, "\""+k+"\":\""+v+"\"")
-	   }
-	   labelString := "{" + strings.Join(tokens, ",") + "}"
-	   patch := fmt.Sprintf(`{"metadata":{"labels":%v}}`, labelString)
-
-	*/
-
+func (r *KataConfigOpenShiftReconciler) labelNode(nodeSelector *metav1.LabelSelector) (err error) {
        	labelSelector, _ := metav1.LabelSelectorAsSelector(nodeSelector)
 	nodeList := &corev1.NodeList{}
 	listOpts := []client.ListOption{
@@ -704,59 +686,33 @@ func (r *KataConfigOpenShiftReconciler) labelNode(nodeSelector *metav1.LabelSele
 
 	if err := r.Client.List(context.TODO(), nodeList, listOpts...); err != nil {
 		r.Log.Error(err, "Getting list of nodes failed")
-		return
+		return err
 	}
 
 	for _, node := range nodeList.Items {
-		node.Labels["feature.node.kubernetes.io/kata-oc"] = "true"
+                if _, ok := node.Labels["feature.node.kubernetes.io/kata-oc"]; !ok {
+                         node.Labels["feature.node.kubernetes.io/kata-oc"] = "true"
+                }
 		err = r.Client.Update(context.TODO(), &node)
 		if err != nil {
-			if !k8serrors.IsConflict(err) {
-				r.Log.Error(err, "Error when adding labels to node", "node", node)
-			} else {
-				r.Log.Info("Conflict when adding labels to node: ", "node", node)
-			}
+ 		     r.Log.Error(err, "Error when adding labels to node", "node", node)
+                     return err
 		}
 
 	}
+        return nil
 
 }
 
-func (r *KataConfigOpenShiftReconciler) unlabelNode(node *corev1.Node) {
-	var err error
-	var lsMap map[string]string
-	/*
-
-		if r.kataConfig.Spec.KataConfigPoolSelector != nil {
-			// KataConfigPoolSelector can be a MatchExpression or MatchLabel. Need to Convert MatchExpression to MatchLabel
-			lsMap, err = metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
-			if err != nil {
-				r.Log.Error(err, "Unable to parse KataConfigPoolSelector")
-			}
-
-		}
-
-		// Delete runtime.kata label
-		delete(node.Labels, "feature.node.kubernetes.io/runtime.kata")
-
-		for k := range lsMap {
-			if node.Labels == nil || len(node.Labels[k]) == 0 {
-				break
-			}
-			delete(node.Labels, k)
-		}
-	*/
-
+func (r *KataConfigOpenShiftReconciler) unlabelNode(node *corev1.Node) (err error) {
 	delete(node.Labels, "feature.node.kubernetes.io/kata-oc")
 	err = r.Client.Update(context.TODO(), node)
 	if err != nil {
-		if !k8serrors.IsConflict(err) {
 			r.Log.Error(err, "Error when removing labels from node: ", "node", node)
-			return
-		} else {
-			r.Log.Info("Conflict when trying to remove labels from node: ", "node", node)
-		}
+			return err
 	}
+
+        return nil
 
 }
 
@@ -829,8 +785,10 @@ func (r *KataConfigOpenShiftReconciler) updateUninstallStatus() (error, bool) {
 			case "Done":
 				err, r.kataConfig.Status.UnInstallationStatus.Completed =
 					r.updateCompletedNodes(&node, r.kataConfig.Status.UnInstallationStatus.Completed)
-				// Unlabel the Node
-				r.unlabelNode(&node)
+                                if err == nil {
+				     // Unlabel the Node
+				     err = r.unlabelNode(&node)
+                                }
 			case "Degraded":
 				err, r.kataConfig.Status.UnInstallationStatus.Failed.FailedNodesList =
 					r.updateFailedNodes(&node, r.kataConfig.Status.UnInstallationStatus.Failed.FailedNodesList)
@@ -873,7 +831,7 @@ func (r *KataConfigOpenShiftReconciler) updateCompletedNodes(node *corev1.Node, 
 		completedStatus.CompletedNodesList = append(completedStatus.CompletedNodesList, node.GetName())
 		completedStatus.CompletedNodesCount = int(foundMcp.Status.UpdatedMachineCount)
 	}
-
+        
 	return nil, completedStatus
 }
 
