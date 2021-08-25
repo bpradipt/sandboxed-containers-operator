@@ -122,8 +122,11 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() (*mcfgv1.MachineConfigPool
 		Values:   []string{"kata-oc", "worker"},
 	}
 
-	nodeSelector := metav1.AddLabelToSelector(&metav1.LabelSelector{}, "feature.node.kubernetes.io/runtime.kata", "true")
-	mcpNodeSelector := metav1.CloneSelectorAndAddLabel(nodeSelector, "feature.node.kubernetes.io/kata-oc", "true")
+        nodeSelector := &metav1.LabelSelector{}
+  
+        if r.kataConfig.Spec.UseNFD {
+	    nodeSelector = metav1.AddLabelToSelector(nodeSelector, "feature.node.kubernetes.io/runtime.kata", "true")
+        }
 
 	if r.kataConfig.Spec.KataConfigPoolSelector != nil {
 		// KataConfigPoolSelector can be a MatchExpression or MatchLabel. Need to Convert MatchExpression to MatchLabel
@@ -131,14 +134,16 @@ func (r *KataConfigOpenShiftReconciler) newMCPforCR() (*mcfgv1.MachineConfigPool
 		if err != nil {
 			r.Log.Error(err, "Unable to parse KataConfigPoolSelector")
 		}
-		// Add runtime.kata label
-		lsMap["feature.node.kubernetes.io/runtime.kata"] = "true"
-		nodeSelector = metav1.SetAsLabelSelector(lsMap)
-		lsMap["feature.node.kubernetes.io/kata-oc"] = "true"
-		mcpNodeSelector = metav1.SetAsLabelSelector(lsMap)
+                //Add labels to nodeSelector 
+                for k, v := range lsMap {
+                       nodeSelector = metav1.AddLabelToSelector(nodeSelector, k, v)
+                }
 	}
+	mcpNodeSelector := metav1.CloneSelectorAndAddLabel(nodeSelector, "feature.node.kubernetes.io/kata-oc", "true")
+
 	r.Log.Info("NodeSelector: ", "nodeSelector", nodeSelector)
 	r.Log.Info("mcpNodeSelector: ", "mcpNodeSelector", mcpNodeSelector)
+
 
 	mcp := &mcfgv1.MachineConfigPool{
 		TypeMeta: metav1.TypeMeta{
@@ -284,15 +289,24 @@ func (r *KataConfigOpenShiftReconciler) setRuntimeClass() (ctrl.Result, error) {
 			},
 		}
 
-		nodeSelector := map[string]string{"feature.node.kubernetes.io/runtime.kata": "true"}
+                nodeSelector := make( map[string]string)
+
+                nodeSelector["feature.node.kubernetes.io/kata-oc"] = "true"
+
+                if r.kataConfig.Spec.UseNFD {
+                     nodeSelector["feature.node.kubernetes.io/runtime.kata"] = "true"
+                }
 
 		if r.kataConfig.Spec.KataConfigPoolSelector != nil {
 			r.Log.Info("KataConfigPoolSelector:", "r.kataConfig.Spec.KataConfigPoolSelector", r.kataConfig.Spec.KataConfigPoolSelector)
-			nodeSelector, err := metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
+			lsMap, err := metav1.LabelSelectorAsMap(r.kataConfig.Spec.KataConfigPoolSelector)
 			if err != nil {
 				r.Log.Error(err, "Unable to get nodeSelector for runtimeClass")
 			}
-			nodeSelector["feature.node.kubernetes.io/runtime.kata"] = "true"
+                        // Add the labels to nodeSelector
+                        for k, v := range lsMap {
+                             nodeSelector[k] = v
+                        }
 		}
 
 		rc.Scheduling = &nodeapi.Scheduling{
