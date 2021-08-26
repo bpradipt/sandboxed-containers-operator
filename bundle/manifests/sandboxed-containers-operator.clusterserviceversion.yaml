@@ -9,24 +9,29 @@ metadata:
           "kind": "KataConfig",
           "metadata": {
             "name": "example-kataconfig"
+          },
+          "spec": {
+            "kataConfigPoolSelector": {
+              "matchLabels": {}
+            },
+            "useNFD": false
           }
         }
       ]
     capabilities: Basic Install
-    operators.operatorframework.io/builder: operator-sdk-v1.2.0
+    operators.operatorframework.io/builder: operator-sdk-v1.10.0+git
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v2
-    operatorframework.io/suggested-namespace: openshift-sandboxed-containers-operator
   name: sandboxed-containers-operator.v1.0.0
+  namespace: placeholder
 spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
     - kind: KataConfig
       name: kataconfigs.kataconfiguration.openshift.io
-      description: The kataconfig CR represent a installation of Kata in a cluster and its current state.
       version: v1
-  displayName: Sandboxed Containers Operator
-  description: An operator to perform lifecycle management (install/upgrade/uninstall) of Sandboxed Containers Runtime on Openshift as well as Kubernetes cluster
+  description: An operator for running sandboxed containers in OpenShift
+  displayName: OpenShift sandboxed containers
   icon:
   - base64data: ""
     mediatype: ""
@@ -90,18 +95,6 @@ spec:
           - kataconfiguration.openshift.io
           resources:
           - kataconfigs
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - kataconfiguration.openshift.io
-          resources:
-          - kataconfigs
           - kataconfigs/finalizers
           verbs:
           - create
@@ -145,7 +138,7 @@ spec:
           - create
         serviceAccountName: default
       deployments:
-      - name: sandboxed-containers-operator-controller-manager
+      - name: controller-manager
         spec:
           replicas: 1
           selector:
@@ -159,6 +152,17 @@ spec:
             spec:
               containers:
               - args:
+                - --secure-listen-address=0.0.0.0:8443
+                - --upstream=http://127.0.0.1:8080/
+                - --logtostderr=true
+                - --v=10
+                image: gcr.io/kubebuilder/kube-rbac-proxy@sha256:e10d1d982dd653db74ca87a1d1ad017bc5ef1aeb651bdea089debf16485b080b
+                name: kube-rbac-proxy
+                ports:
+                - containerPort: 8443
+                  name: https
+                resources: {}
+              - args:
                 - --metrics-addr=127.0.0.1:8080
                 - --enable-leader-election
                 command:
@@ -166,6 +170,10 @@ spec:
                 image: quay.io/bpradipt/openshift-sandboxed-containers-operator:latest
                 imagePullPolicy: Always
                 name: manager
+                ports:
+                - containerPort: 9443
+                  name: webhook-server
+                  protocol: TCP
                 resources:
                   limits:
                     cpu: 100m
@@ -173,6 +181,10 @@ spec:
                   requests:
                     cpu: 100m
                     memory: 40Mi
+                volumeMounts:
+                - mountPath: /tmp/k8s-webhook-server/serving-certs
+                  name: cert
+                  readOnly: true
               nodeSelector:
                 node-role.kubernetes.io/master: ""
               terminationGracePeriodSeconds: 10
@@ -191,6 +203,11 @@ spec:
               - effect: NoSchedule
                 key: node.kubernetes.io/memory-pressure
                 operator: Exists
+              volumes:
+              - name: cert
+                secret:
+                  defaultMode: 420
+                  secretName: webhook-server-cert
       permissions:
       - rules:
         - apiGroups:
@@ -231,14 +248,22 @@ spec:
     type: MultiNamespace
   - supported: false
     type: AllNamespaces
+  keywords:
+  - sandboxed containers
+  - kata
+  links:
+  - name: Sandboxed Containers Operator
+    url: https://sandboxed-containers-operator.domain
+  maturity: alpha
+  provider:
+    name: Red Hat
+  version: 1.0.0
   webhookdefinitions:
-  - type: ValidatingAdmissionWebhook
-    admissionReviewVersions:
+  - admissionReviewVersions:
     - v1beta1
     - v1
     containerPort: 443
-    targetPort: 9443
-    deploymentName: sandboxed-containers-operator-controller-manager
+    deploymentName: controller-manager
     failurePolicy: Fail
     generateName: vkataconfig.kb.io
     rules:
@@ -251,17 +276,6 @@ spec:
       resources:
       - kataconfigs
     sideEffects: None
+    targetPort: 9443
+    type: ValidatingAdmissionWebhook
     webhookPath: /validate-kataconfiguration-openshift-io-v1-kataconfig
-  keywords:
-  - kernel-isolated containers
-  links:
-  - name: Sandboxed Containers Operator
-    url: https://www.github.com/openshift/sandboxed-containers-operator
-  maintainers:
-  - email: jfreimann@redhat.com'
-    name: '''Jens Freimann'
-  maturity: alpha
-  provider:
-    name: Red Hat
-    url: https://www.github.com/openshift/sandboxed-containers-operator
-  version: 1.0.0 

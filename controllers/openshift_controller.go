@@ -42,6 +42,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+        //operatorv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 )
 
 // blank assignment to verify that KataConfigOpenShiftReconciler implements reconcile.Reconciler
@@ -253,6 +254,19 @@ func (r *KataConfigOpenShiftReconciler) kataOcExists() (bool, error) {
 	}
 
 	return true, nil
+}
+
+func (r *KataConfigOpenShiftReconciler) checkNFD() (error) {
+        // Check if NFD is deployed [optional]
+        // Check if NFD labels exist
+        err, _ := r.getNodesWithLabels(map[string]string{"feature.node.kubernetes.io/runtime.kata": "true"})
+        if err != nil {
+             r.Log.Error(err, "NFD labels are missing. Is NFD running?")
+             return err
+        }
+        // Create NFD to get labels
+
+        return nil
 }
 
 func (r *KataConfigOpenShiftReconciler) getMcpName() (string, error) {
@@ -475,6 +489,15 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 
 func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.Result, error) {
 	r.Log.Info("Kata installation in progress")
+
+        // Check NFD
+        if r.kataConfig.Spec.UseNFD {
+                err := r.checkNFD()
+                if err != nil {
+                    return reconcile.Result{}, err
+                }
+        }
+
 	machinePool, err := r.getMcpName()
 	if err != nil {
 		return reconcile.Result{}, err
@@ -686,6 +709,20 @@ func (r *KataConfigOpenShiftReconciler) getNodes() (error, *corev1.NodeList) {
 
 	if err := r.Client.List(context.TODO(), nodes, listOpts...); err != nil {
 		r.Log.Error(err, "Getting list of nodes failed")
+		return err, &corev1.NodeList{}
+	}
+	return nil, nodes
+}
+
+func (r *KataConfigOpenShiftReconciler) getNodesWithLabels(nodeLabels map[string]string) (error, *corev1.NodeList) {
+	nodes := &corev1.NodeList{}
+	labelSelector := labels.SelectorFromSet(nodeLabels)
+	listOpts := []client.ListOption{
+		client.MatchingLabelsSelector{Selector: labelSelector},
+	}
+
+	if err := r.Client.List(context.TODO(), nodes, listOpts...); err != nil {
+		r.Log.Error(err, "Getting list of nodes having specified labels failed")
 		return err, &corev1.NodeList{}
 	}
 	return nil, nodes

@@ -78,7 +78,7 @@ docker-push:
 	docker push ${IMG}
 
 # Build the docker image, using podman
-podman-build: test
+podman-build: 
 	podman build --squash-all --no-cache . -t ${IMG}
 
 # Push the docker image, using podman
@@ -94,7 +94,7 @@ ifeq (, $(shell which controller-gen))
 	CONTROLLER_GEN_TMP_DIR=$$(mktemp -d) ;\
 	cd $$CONTROLLER_GEN_TMP_DIR ;\
 	go mod init tmp ;\
-	go get sigs.k8s.io/controller-tools/cmd/controller-gen@v0.3.0 ;\
+	go get sigs.k8s.io/controller-tools/cmd/controller-gen@v0.4.0 ;\
 	rm -rf $$CONTROLLER_GEN_TMP_DIR ;\
 	}
 CONTROLLER_GEN=$(GOBIN)/controller-gen
