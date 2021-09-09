@@ -90,6 +90,16 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test -v ./... -coverprofile cover.out -args -ginkgo.v
 
+certmanager-install: ## Install cert-manager on the cluster
+			kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v1.5.3/cert-manager.yaml
+			@while IP=$$( kubectl get ep cert-manager-webhook -n cert-manager -o jsonpath="{.subsets..addresses[0]['ip']}" ) && [ -z $$IP ]; do \
+				sleep 2 ;\
+				echo "Waiting for certmanager service to be up" ; \
+			done
+
+certmanager-uninstall: ## Un-install cert-manager from the cluster
+			kubectl delete -f https://github.com/jetstack/cert-manager/releases/download/v1.5.3/cert-manager.yaml                
+
 ##@ Build
 
 build: generate fmt vet ## Build manager binary.
@@ -113,12 +123,13 @@ install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build config/crd | kubectl delete -f -
 
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+deploy: certmanager-install manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default | kubectl apply -f -
 
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build config/default | kubectl delete -f -
+	certmanager-uninstall
 
 
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
