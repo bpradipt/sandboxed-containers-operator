@@ -266,10 +266,21 @@ func (r *ImageGenerator) createJobFromFile(jobFileName string) (*batchv1.Job, er
 			return nil, err
 		}
 		igLogger.Info("Setting IMAGE_ID environment variable for delete job", "imageId", imageId)
-		job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
-			Name:  "IMAGE_ID",
-			Value: imageId,
-		})
+
+		// If provider is Azure set IMAGE_ID, if provider is AWS set AMI_ID
+		if r.provider == AzureProvider {
+
+			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
+				Name:  "IMAGE_ID",
+				Value: imageId,
+			})
+		} else if r.provider == AWSProvider {
+			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
+				Name:  "AMI_ID",
+				Value: imageId,
+			})
+		}
+
 	}
 
 	// If RELATED_PODVM_BUILDER_IMAGE environment variable is set, use it
