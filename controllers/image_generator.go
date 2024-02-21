@@ -309,9 +309,9 @@ func (r *ImageGenerator) deleteJob(job *batchv1.Job) error {
 	// This is to avoid the error "job.batch "jobName" not found"
 	// when the job has already been deleted
 
-	deletePolicy := metav1.DeletePropagationBackground
+	//deletePolicy := metav1.DeletePropagationBackground
 	if err := r.client.Delete(context.TODO(), job, &client.DeleteOptions{
-		PropagationPolicy: &deletePolicy,
+		//PropagationPolicy: &deletePolicy,
 	}); err != nil {
 		if k8serrors.IsNotFound(err) {
 			igLogger.Info("Job has already been deleted", "jobName", job.Name, "namespace", job.Namespace)
