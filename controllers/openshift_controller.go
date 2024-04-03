@@ -17,7 +17,6 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -29,7 +28,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/labels"
 
-	ignTypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/go-logr/logr"
 	secv1 "github.com/openshift/api/security/v1"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
@@ -63,8 +61,9 @@ type KataConfigOpenShiftReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	kataConfig   *kataconfigurationv1.KataConfig
-	FeatureGates *featuregates.FeatureGates
+	kataConfig         *kataconfigurationv1.KataConfig
+	FeatureGates       *featuregates.FeatureGates
+	FeatureGatesStatus featuregates.FeatureGateStatus
 }
 
 const (
@@ -72,7 +71,6 @@ const (
 	dashboard_configmap_name            = "grafana-dashboard-sandboxed-containers"
 	dashboard_configmap_namespace       = "openshift-config-managed"
 	container_runtime_config_name       = "kata-crio-config"
-	extension_mc_name                   = "50-enable-sandboxed-containers-extension"
 	DEFAULT_PEER_PODS                   = "10"
 	peerpodConfigCrdName                = "peerpodconfig-openshift"
 	peerpodsMachineConfigPathLocation   = "/config/peerpods"
@@ -125,9 +123,8 @@ func (r *KataConfigOpenShiftReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{}, err
 	}
 
-	if r.FeatureGates.IsEnabled(ctx, "timeTravel") {
-		r.Log.Info("TimeTravel feature is enabled. Performing feature-specific logic...")
-	}
+	// Check for enabled FeatureGates by retrieving the FeatureGateStatus
+	r.FeatureGatesStatus = r.FeatureGates.GetFeatureGateStatus(ctx)
 
 	return func() (ctrl.Result, error) {
 
@@ -492,46 +489,6 @@ func getExtensionName() string {
 		extension = "kata-containers"
 	}
 	return extension
-}
-
-func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.MachineConfig, error) {
-	r.Log.Info("Creating MachineConfig for Custom Resource")
-
-	ic := ignTypes.Config{
-		Ignition: ignTypes.Ignition{
-			Version: "3.2.0",
-		},
-	}
-
-	icb, err := json.Marshal(ic)
-	if err != nil {
-		return nil, err
-	}
-
-	extension := getExtensionName()
-
-	mc := mcfgv1.MachineConfig{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "machineconfiguration.openshift.io/v1",
-			Kind:       "MachineConfig",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: extension_mc_name,
-			Labels: map[string]string{
-				"machineconfiguration.openshift.io/role": machinePool,
-				"app":                                    r.kataConfig.Name,
-			},
-			Namespace: OperatorNamespace,
-		},
-		Spec: mcfgv1.MachineConfigSpec{
-			Extensions: []string{extension},
-			Config: runtime.RawExtension{
-				Raw: icb,
-			},
-		},
-	}
-
-	return &mc, nil
 }
 
 func (r *KataConfigOpenShiftReconciler) addFinalizer() error {
@@ -1035,9 +992,23 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 		r.Log.Info("SCNodeRole is: " + machinePool)
 	}
 
-	wasMcJustCreated, err := r.createExtensionMc(machinePool)
-	if err != nil {
-		return ctrl.Result{Requeue: true}, nil
+	// Based on ImageBasedDeployment feature, we'll either create an ExtensionMachineConfig or
+	// just apply the image
+	wasMcJustCreated := false
+
+	// If featuregate ImageBasedDeployment is enabled then create the image based MC
+	// TBD: Handling switching from image based deployment to extension and vice versa
+
+	if r.FeatureGatesStatus[featuregates.ImageBasedDeployment] {
+		wasMcJustCreated, err = r.createImageMc(machinePool)
+		if err != nil {
+			return ctrl.Result{Requeue: true}, nil
+		}
+	} else {
+		wasMcJustCreated, err = r.createExtensionMc(machinePool)
+		if err != nil {
+			return ctrl.Result{Requeue: true}, nil
+		}
 	}
 
 	if wasMcJustCreated {
@@ -1144,6 +1115,7 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 			// Give sometime for the error to go away before reconciling again
 			return reconcile.Result{Requeue: true, RequeueAfter: 15 * time.Second}, err
 		}
+
 		r.Log.Info("create Scc")
 		err = r.createScc()
 		if err != nil {

@@ -60,6 +60,7 @@ import (
 
 const (
 	OperatorNamespace = "openshift-sandboxed-containers-operator"
+	OperatorNamespace = "openshift-sandboxed-containers-operator"
 )
 
 var (
@@ -146,7 +147,7 @@ func main() {
 			FeatureGates: &featuregates.FeatureGates{
 				Client:        mgr.GetClient(),
 				Namespace:     OperatorNamespace,
-				ConfigMapName: "osc-feature-gates",
+				ConfigMapName: featuregates.FeatureGatesConfigMapName,
 			},
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create KataConfig controller for OpenShift cluster", "controller", "KataConfig")
