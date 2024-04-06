@@ -19,7 +19,8 @@ type FeatureGates struct {
 type FeatureGateStatus map[string]bool
 
 var DefaultFeatureGates = map[string]bool{
-	ImageBasedDeployment: false,
+	ImageBasedDeployment:     false,
+	AdditionalRuntimeClasses: false,
 }
 
 var fgLogger logr.Logger = ctrl.Log.WithName("featuregates")
