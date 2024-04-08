@@ -59,6 +59,7 @@ type KataConfigOpenShiftReconciler struct {
 	kataConfig         *kataconfigurationv1.KataConfig
 	FeatureGates       *featuregates.FeatureGates
 	FeatureGatesStatus featuregates.FeatureGateStatus
+	deploymentState    DeploymentState
 }
 
 const (
@@ -930,17 +931,61 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 	wasMcJustCreated := false
 
 	// If featuregate ImageBasedDeployment is enabled then create the image based MC
-	// TBD: Handling switching from image based deployment to extension and vice versa
+	// If it's disabled, create the extension based MC
 
 	if r.FeatureGatesStatus[featuregates.ImageBasedDeployment] {
-		wasMcJustCreated, err = r.createImageMc(machinePool)
-		if err != nil {
-			return ctrl.Result{Requeue: true}, nil
+		r.Log.Info("PreviousMcName and PreviousMethod, ImageBasedDeployment=true",
+			"PreviousMcName", r.deploymentState.PreviousMcName, "PreviousMethod", r.deploymentState.PreviousMethod)
+		// Check if the previous deployment method was different
+		// When we first time enter this condition the PreviousMethod will be empty
+		if r.deploymentState.PreviousMethod != "image" {
+			// Rollback the previous deployment
+			if r.deploymentState.PreviousMcName != "" {
+				// Delete the previous MachineConfig
+				err := r.deleteMc(r.deploymentState.PreviousMcName)
+				if err != nil {
+					r.Log.Info("Error deleting previous MachineConfig", "MachineConfig",
+						r.deploymentState.PreviousMcName, "err", err)
+					return ctrl.Result{Requeue: true}, err
+				}
+			}
+			wasMcJustCreated, err = r.createImageMc(machinePool)
+			if err != nil {
+				r.Log.Info("Error creating image MachineConfig for Image based deployment", "err", err)
+				return ctrl.Result{Requeue: true}, err
+			}
+			// Update deployment state
+			r.deploymentState.PreviousMethod = "image"
+			r.deploymentState.PreviousMcName = image_mc_name
 		}
+		// We don't handle any updates to the ImageBasedDeployment configuration
+		r.Log.Info("ImageBasedDeployment is enabled, no updates to the configuration will be handled")
+
 	} else {
-		wasMcJustCreated, err = r.createExtensionMc(machinePool)
-		if err != nil {
-			return ctrl.Result{Requeue: true}, nil
+		r.Log.Info("PreviousMcName and PreviousMethod, ImageBasedDeployment=false",
+			"PreviousMcName", r.deploymentState.PreviousMcName, "PreviousMethod", r.deploymentState.PreviousMethod)
+		// Check if the previous deployment method was different
+		// When we first time enter this condition the PreviousMethod will be empty
+		if r.deploymentState.PreviousMethod != "extension" {
+			// Rollback the previous deployment
+			if r.deploymentState.PreviousMcName != "" {
+				// Delete the previous MachineConfig
+				err := r.deleteMc(r.deploymentState.PreviousMcName)
+				if err != nil {
+					r.Log.Info("Error deleting previous MachineConfig", "MachineConfig",
+						r.deploymentState.PreviousMcName, "err", err)
+					return ctrl.Result{Requeue: true}, err
+				}
+			}
+			wasMcJustCreated, err = r.createExtensionMc(machinePool)
+			if err != nil {
+				r.Log.Info("Error creating extension MachineConfig for Extension based deployment", "err", err)
+				return ctrl.Result{Requeue: true}, err
+			}
+
+			// Update deployment state
+			r.deploymentState.PreviousMethod = "extension"
+			r.deploymentState.PreviousMcName = extension_mc_name
 		}
 	}
 

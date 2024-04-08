@@ -24,6 +24,11 @@ const (
 	image_mc_name     = "50-enable-sandboxed-containers-image"
 )
 
+type DeploymentState struct {
+	PreviousMethod string
+	PreviousMcName string
+}
+
 // If the first return value is 'true' it means that the MC was just created
 // by this call, 'false' means that it's already existed.  As usual, the first
 // return value is only valid if the second one is nil.
@@ -48,7 +53,7 @@ func (r *KataConfigOpenShiftReconciler) createImageMc(machinePool string) (bool,
 
 		err = r.Client.Create(context.TODO(), mc)
 		if err != nil {
-			r.Log.Error(err, "Failed to create a new MachineConfig ", "mc.Name", mc.Name)
+			r.Log.Info("Failed to create a new MachineConfig ", "mc.Name", mc.Name, "err", err)
 			return dummy, err
 		}
 		r.Log.Info("MachineConfig successfully created", "mc.Name", mc.Name)
@@ -78,8 +83,10 @@ func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.
 	}
 
 	if r.FeatureGatesStatus[featuregates.ImageBasedDeployment] {
+		r.Log.Info("Creating MachineConfig for Custom Resource with image")
 		return r.newImageMCForCR(machinePool, icb)
 	} else {
+		r.Log.Info("Creating MachineConfig for Custom Resource with extension")
 		return r.newExtensionMCForCR(machinePool, icb)
 	}
 
@@ -150,4 +157,29 @@ func (r *KataConfigOpenShiftReconciler) newImageMCForCR(machinePool string, icb 
 	}
 
 	return &mc, nil
+}
+
+// Delete the MachineConfig object
+func (r *KataConfigOpenShiftReconciler) deleteMc(mcName string) error {
+	r.Log.Info("Deleting MachineConfig", "mc.Name", mcName)
+	mc := &mcfgv1.MachineConfig{}
+	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: mcName}, mc)
+	if err != nil {
+		if k8serrors.IsNotFound(err) || k8serrors.IsGone(err) {
+			r.Log.Info("MachineConfig not found. Most likely it was already deleted.")
+			return nil
+		}
+		r.Log.Info("failed to retrieve MachineConfig", "err", err)
+		return err
+	}
+
+	r.Log.Info("deleting MachineConfig")
+	err = r.Client.Delete(context.TODO(), mc)
+	if err != nil {
+		r.Log.Error(err, "Failed to delete MachineConfig")
+		return err
+	}
+
+	r.Log.Info("MachineConfig successfully deleted")
+	return nil
 }
