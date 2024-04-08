@@ -60,7 +60,6 @@ import (
 
 const (
 	OperatorNamespace = "openshift-sandboxed-containers-operator"
-	OperatorNamespace = "openshift-sandboxed-containers-operator"
 )
 
 var (
