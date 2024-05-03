@@ -99,6 +99,7 @@ type ImageGenerator struct {
 	clientset *kubernetes.Clientset // k8s clientset
 
 	provider     string
+	clusterId    string
 	CMimageIDKey string
 	fips         bool
 }
@@ -233,6 +234,12 @@ func newImageGenerator(client client.Client) (*ImageGenerator, error) {
 		ig.provider = unsupportedCloudProvider
 		return nil, fmt.Errorf("unsupported cloud provider: %s", ig.provider)
 	}
+
+	clusterID, err := getClusterID(client)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster ID: %v", err)
+	}
+	ig.clusterId = clusterID
 
 	igLogger.Info("ImageGenerator instance has been initialized successfully for cloud provider", "provider", ig.provider)
 	return ig, nil
@@ -638,6 +645,26 @@ func (r *ImageGenerator) createImageConfigMapFromFile() error {
 	cm, err := parseConfigMapYAML(yamlData)
 	if err != nil {
 		return err
+	}
+
+	// For Azure provider set the IMAGE_GALLERY_NAME if its empty
+	// The IMAGE_GALLERY_NAME is set to IMAGE_GALLERY_NAME_PREFIX + "_" + clusterID
+	// Also add tags to IMAGE_GALLERY_TAGS
+	if r.provider == AzureProvider {
+		if cm.Data["IMAGE_GALLERY_NAME"] == "" {
+			image_gallery_name := cm.Data["IMAGE_GALLERY_NAME_PREFIX"] + "_" + r.clusterId
+			cm.Data["IMAGE_GALLERY_NAME"] = image_gallery_name
+			igLogger.Info("Setting IMAGE_GALLERY_NAME", "image_gallery_name", image_gallery_name)
+		}
+
+		// Add tags to IMAGE_GALLERY_TAGS
+		tags := cm.Data["IMAGE_GALLERY_TAGS"]
+		if tags == "" {
+			tags = "clusterID=" + r.clusterId
+		} else {
+			tags = tags + " clusterID=" + r.clusterId
+		}
+		cm.Data["IMAGE_GALLERY_TAGS"] = tags
 	}
 
 	if err := r.client.Create(context.TODO(), cm); err != nil {

@@ -39,6 +39,6 @@ spec:
             - configMapRef:
                 name: aws-podvm-image-cm
                 optional: true
-          command: ["/podvm-builder.sh", "delete", "-f"]
+          command: ["/podvm-builder.sh", "delete", "-f", "-g"]
 
       restartPolicy: Never

@@ -47,7 +47,10 @@ function verify_vars() {
     # Ensure that the image defintion variables are set
     [[ -z "${IMAGE_DEFINITION_PUBLISHER}" ]] && error_exit "IMAGE_DEFINITION_PUBLISHER is empty"
     [[ -z "${IMAGE_DEFINITION_OFFER}" ]] && error_exit "IMAGE_DEFINITION_OFFER is empty"
+
+    [[ -z "${IMAGE_GALLERY_NAME_PREFIX}" ]] && error_exit "IMAGE_GALLERY_NAME_PREFIX is empty"
     [[ -z "${IMAGE_GALLERY_NAME}" ]] && error_exit "IMAGE_GALLERY_NAME is empty"
+
     [[ -z "${IMAGE_DEFINITION_SKU}" ]] && error_exit "IMAGE_DEFINITION_SKU is empty"
     [[ -z "${IMAGE_DEFINITION_OS_TYPE}" ]] && error_exit "IMAGE_DEFINITION_OS_TYPE is empty"
     [[ -z "${IMAGE_DEFINITION_OS_STATE}" ]] && error_exit "IMAGE_DEFINITION_OS_STATE is empty"
@@ -135,6 +138,7 @@ function login_to_azure() {
 
 # Function to create Azure image gallery
 # The gallery name is available in the variable IMAGE_GALLERY_NAME
+# Any tags to apply is available in the variale IMAGE_GALLERY_TAGS
 
 function create_image_gallery() {
     echo "Creating Azure image gallery"
@@ -155,9 +159,14 @@ function create_image_gallery() {
     # If any error occurs, exit the script with an error message
 
     # Create the image gallery
+    echo "Creating image gallery ${IMAGE_GALLERY_NAME} with tags: ${IMAGE_GALLERY_TAGS}"
+
     az sig create --resource-group "${AZURE_RESOURCE_GROUP}" \
-        --gallery-name "${IMAGE_GALLERY_NAME}" ||
+        --gallery-name "${IMAGE_GALLERY_NAME}" --tags "${IMAGE_GALLERY_TAGS}" ||
         error_exit "Failed to create Azure image gallery"
+
+    # Update peer-pods-cm configmap with the gallery name
+    add_image_gallery_annotation_to_peer_pods_cm
 
     echo "Azure image gallery created successfully"
 
@@ -361,15 +370,6 @@ function create_or_update_image_configmap() {
         IMAGE_ID_LIST="${IMAGE_ID}"
     fi
 
-    # Create or update the value of the azure key in podvm-images configmap with all the images
-    # If any error occurs, exit the script with an error message
-    kubectl create configmap podvm-images \
-        -n openshift-sandboxed-containers-operator \
-        --from-literal=azure="${IMAGE_ID_LIST}" \
-        --dry-run=client -o yaml |
-        kubectl apply -f - ||
-        error_exit "Failed to create or update podvm-images configmap"
-
     echo "podvm-images configmap created or updated successfully"
 }
 
@@ -397,7 +397,7 @@ function recreate_image_configmap() {
 # Function to add the image id as annotation in the peer-pods-cm configmap
 
 function add_image_id_annotation_to_peer_pods_cm() {
-    echo "Adding image id to peer-pods-cm configmap"
+    echo "Adding image id annotation to peer-pods-cm configmap"
 
     # Check if the peer-pods-cm configmap exists
     if ! kubectl get configmap peer-pods-cm -n openshift-sandboxed-containers-operator >/dev/null 2>&1; then
@@ -410,7 +410,64 @@ function add_image_id_annotation_to_peer_pods_cm() {
         "LATEST_IMAGE_ID=${IMAGE_ID}" ||
         error_exit "Failed to add the image id as annotation to peer-pods-cm configmap"
 
-    echo "Image id added as annotation to peer-pods-cm configmap successfully"
+    echo "Image id annotation added as annotation to peer-pods-cm configmap successfully"
+}
+
+# Function to delete the LATEST_IMAGE_ID annotation from the peer-pods-cm configmap
+
+function delete_image_id_annotation_from_peer_pods_cm() {
+    echo "Deleting image id annotation from peer-pods-cm configmap"
+
+    # Check if the peer-pods-cm configmap exists
+    if ! kubectl get configmap peer-pods-cm -n openshift-sandboxed-containers-operator >/dev/null 2>&1; then
+        echo "peer-pods-cm configmap does not exist. Skipping deleting the image id"
+        return
+    fi
+
+    # Delete the image id annotation from peer-pods-cm configmap
+    kubectl annotate configmap peer-pods-cm -n openshift-sandboxed-containers-operator \
+        "LATEST_IMAGE_ID-" ||
+        error_exit "Failed to delete the image id annotation from peer-pods-cm configmap"
+
+    echo "Image id annotation deleted from peer-pods-cm configmap successfully"
+}
+
+# Function to add image gallery annotation to peer-pods-cm configmap
+
+function add_image_gallery_annotation_to_peer_pods_cm() {
+    echo "Adding IMAGE_GALLERY_NAME annotation to peer-pods-cm configmap"
+
+    # Check if the peer-pods-cm configmap exists
+    if ! kubectl get configmap peer-pods-cm -n openshift-sandboxed-containers-operator >/dev/null 2>&1; then
+        echo "peer-pods-cm configmap does not exist. Skipping adding the IMAGE_GALLERY_NAME annotation"
+        return
+    fi
+
+    # Add IMAGE_GALLERY_NAME annotation to peer-pods-cm configmap
+    kubectl annotate configmap peer-pods-cm -n openshift-sandboxed-containers-operator \
+        "IMAGE_GALLERY_NAME=${IMAGE_GALLERY_NAME}" ||
+        error_exit "Failed to add the IMAGE_GALLERY_NAME annotation to peer-pods-cm configmap"
+
+    echo "IMAGE_GALLERY_NAME annotation added to peer-pods-cm configmap successfully"
+}
+
+# Function to delete the image gallery annotation from peer-pods-cm configmap
+
+function delete_image_gallery_annotation_from_peer_pods_cm() {
+    echo "Deleting IMAGE_GALLERY_NAME annotation from peer-pods-cm configmap"
+
+    # Check if the peer-pods-cm configmap exists
+    if ! kubectl get configmap peer-pods-cm -n openshift-sandboxed-containers-operator >/dev/null 2>&1; then
+        echo "peer-pods-cm configmap does not exist. Skipping deleting the IMAGE_GALLERY_NAME annotation"
+        return
+    fi
+
+    # Delete the IMAGE_GALLERY_NAME annotation from peer-pods-cm configmap
+    kubectl annotate configmap peer-pods-cm -n openshift-sandboxed-containers-operator \
+        "IMAGE_GALLERY_NAME-" ||
+        error_exit "Failed to delete the IMAGE_GALLERY_NAME annotation from peer-pods-cm configmap"
+
+    echo "IMAGE_GALLERY_NAME annotation deleted from peer-pods-cm configmap successfully"
 }
 
 # Function to create the image in Azure
@@ -534,6 +591,7 @@ function delete_image_definition() {
 
 # Function to delete the image gallery from Azure
 # Accept force argument to delete the gallery even if image versions exist
+# IMAGE_GALLERY_NAME and IMAGE_GALLERY_TAGS are assumed to be populated
 
 function delete_image_gallery() {
     echo "Deleting Azure image gallery"
@@ -552,9 +610,32 @@ function delete_image_gallery() {
         return
     fi
 
+    # If IMAGE_GALLERY_TAGS is set, then query the gallery with the tags. If false, then skip deleting the gallery
+
+    # If the gallery_tag is not present, then skip deleting the gallery
+
+    if [[ "${IMAGE_GALLERY_TAGS}" ]]; then
+        # The IMAGE_GALLERY_TAGS is of the form k1=v1 k2=v2 .. This needs to be converted to
+        # JMESPath query format for az sig show
+        # tags.k1=='v1' &&  tags.k2=='v2' ..
+        query_tags=$(convert_tags_to_jmespath_query_fmt "${IMAGE_GALLERY_TAGS}")
+
+        # Check if the tags exist in the gallery
+        echo "Checking if the gallery ${IMAGE_GALLERY_NAME} has the tags ${IMAGE_GALLERY_TAGS}"
+        gallery_tag_query_result=$(az sig show --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --gallery-name "${IMAGE_GALLERY_NAME}" --query "${query_tags}" --output tsv)
+
+        # If gallery_tag_query_result is false then skip deleting the gallery
+        if [[ "${gallery_tag_query_result}" != "true" ]]; then
+            echo "Gallery ${IMAGE_GALLERY_NAME} does not contain the tag ${IMAGE_GALLERY_TAGS}. Skipping deleting the gallery"
+            return
+        fi
+    fi
+
     # Check if the gallery has any image versions
     get_all_image_ids
 
+    # This will set the IMAGE_ID_LIST variable
     # If the gallery has image versions, then skip deleting the gallery if "force" option is not passed
     if [[ "${IMAGE_ID_LIST}" ]] && [[ "${1}" != "force" ]]; then
         echo "Gallery ${IMAGE_GALLERY_NAME} has image versions. Skipping deleting the gallery"
@@ -573,6 +654,9 @@ function delete_image_gallery() {
     az sig delete --resource-group "${AZURE_RESOURCE_GROUP}" \
         --gallery-name "${IMAGE_GALLERY_NAME}" ||
         error_exit "Failed to delete the image gallery"
+
+    # Remove the image gallery annotation from peer-pods-cm configmap
+    delete_image_gallery_annotation_from_peer_pods_cm
 
     echo "Azure image gallery deleted successfully"
 }
@@ -608,7 +692,47 @@ function delete_image_using_id() {
     az image delete --ids "${IMAGE_ID}" ||
         error_exit "Failed to delete the image"
 
+    # Remove the image id annotation from peer-pods-cm configmap
+    delete_image_id_annotation_from_peer_pods_cm
+
     echo "Azure image deleted successfully"
+}
+
+# Function to convert tags in "k1=v1 k2=v2" format to JMESPath query format
+
+function convert_tags_to_jmespath_query_fmt() {
+    local input_tags=$1
+    local jmespath_query=""
+
+    # Split the input string by spaces
+    local -a keys_values=()
+    while IFS=" " read -r -a kv; do
+        keys_values+=("${kv[@]}")
+    done <<<"$input_tags"
+
+    for kv in "${keys_values[@]}"; do
+        # Split each key-value pair by the equals sign
+
+        local key value
+        IFS="=" read -r key value <<<"$kv"
+
+        # Append the JMESPath query for this key-value pair
+        # The az CLI json needs tags.k1=='v1' && tags.k2=='v2' ..
+        # sample json
+        #{
+        #"name": "test_12345",
+        #"tags": {
+        #  "created_by": "osc-job"
+        #},
+        #"type": "Microsoft.Compute/galleries"
+        #}
+        jmespath_query="${jmespath_query}tags.${key}=='${value}' && "
+    done
+
+    # Remove the trailing " && " from the query
+    jmespath_query="${jmespath_query% && }"
+
+    echo "$jmespath_query"
 }
 
 # display help message
