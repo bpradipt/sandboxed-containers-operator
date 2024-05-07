@@ -20,6 +20,11 @@ ARG CAA_SRC=https://github.com/confidential-containers/cloud-api-adaptor
 ARG CAA_REF=main
 ENV CAA_SRC=$CAA_SRC
 ENV CAA_REF=$CAA_REF
+
+RUN if [[ "$CAA_SRC" == *"gitlab.cee.redhat.com"* ]] ; then \
+    dnf install -y http://hdn.corp.redhat.com/rhel7-csb-stage/RPMS/noarch/redhat-internal-cert-install-0.1-31.el7.noarch.rpm ; \
+    fi
+
 RUN git clone ${CAA_SRC} -b ${CAA_REF} /src/cloud-api-adaptor
 
 ADD podvm-builder.sh /podvm-builder.sh
