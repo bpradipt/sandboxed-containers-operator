@@ -123,8 +123,9 @@ func (r *KataConfigOpenShiftReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{}, err
 	}
 
-	if r.FeatureGates.IsEnabled(ctx, "timeTravel") {
-		r.Log.Info("TimeTravel feature is enabled. Performing feature-specific logic...")
+	err = r.processFeatureGates()
+	if err != nil {
+		r.Log.Info("Unable to process feature gates", "err", err)
 	}
 
 	return func() (ctrl.Result, error) {

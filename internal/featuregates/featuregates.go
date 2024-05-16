@@ -2,8 +2,9 @@ package featuregates
 
 import (
 	"context"
-	corev1 "k8s.io/api/core/v1"
 	"log"
+
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -13,10 +14,12 @@ type FeatureGates struct {
 	ConfigMapName string
 }
 
+const (
+	TimeTravelFeatureGate = "timeTravel"
+)
+
 var DefaultFeatureGates = map[string]bool{
-	"timeTravel":              false,
-	"quantumEntanglementSync": false,
-	"autoHealingWithAI":       true,
+	"timeTravel": false,
 }
 
 func (fg *FeatureGates) IsEnabled(ctx context.Context, feature string) bool {
