@@ -50,12 +50,9 @@ metadata:
   name: osc-feature-gates
   namespace: openshift-sandboxed-containers-operator
 data:
-  timeTravel: "true"
-  quantumEntanglementSync: "false"
-  autoHealingWithAI: "true"
+  timeTravel: "true" 
 ```
 
-In this example, `timeTravel` is explicitly enabled, while
-`quantumEntanglementSync` is disabled, and `autoHealingWithAI` is enabled,
+In this example, `timeTravel` is explicitly enabled,
 showcasing how to manage the state of each feature individually. Regardless the
 default values they have.
