@@ -36,7 +36,6 @@ import (
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 	mcfgconsts "github.com/openshift/machine-config-operator/pkg/daemon/constants"
 	kataconfigurationv1 "github.com/openshift/sandboxed-containers-operator/api/v1"
-	"github.com/openshift/sandboxed-containers-operator/internal/featuregates"
 	corev1 "k8s.io/api/core/v1"
 	nodeapi "k8s.io/api/node/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -61,8 +60,7 @@ type KataConfigOpenShiftReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	kataConfig   *kataconfigurationv1.KataConfig
-	FeatureGates *featuregates.FeatureGates
+	kataConfig *kataconfigurationv1.KataConfig
 }
 
 const (

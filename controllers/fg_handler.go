@@ -17,17 +17,13 @@ const (
 // Function to handle the feature gates
 func (r *KataConfigOpenShiftReconciler) processFeatureGates() error {
 
-	if r.FeatureGates == nil {
-		return nil
-	}
-
 	// Check which feature gates are enabled in the FG ConfigMap and
 	// perform the necessary actions
 	// The feature gates are defined in internal/featuregates/featuregates.go
 	// and are fetched from the ConfigMap in the namespace
 	// Eg. TimeTravelFeatureGate
 
-	if r.FeatureGates.IsEnabled(context.TODO(), featuregates.TimeTravelFeatureGate) {
+	if featuregates.IsEnabled(context.TODO(), featuregates.TimeTravelFeatureGate) {
 		r.Log.Info("Feature gate is enabled", "featuregate", featuregates.TimeTravelFeatureGate)
 		// Perform the necessary actions
 		r.handleTimeTravelFeature(Enabled)
