@@ -61,6 +61,9 @@ type KataConfigOpenShiftReconciler struct {
 	Scheme *runtime.Scheme
 
 	kataConfig *kataconfigurationv1.KataConfig
+
+	ImgMc      *mcfgv1.MachineConfig
+	ExistingMc *mcfgv1.MachineConfig
 }
 
 const (
@@ -69,6 +72,7 @@ const (
 	dashboard_configmap_namespace       = "openshift-config-managed"
 	container_runtime_config_name       = "kata-crio-config"
 	extension_mc_name                   = "50-enable-sandboxed-containers-extension"
+	image_mc_name                       = "50-enable-sandboxed-containers-image"
 	DEFAULT_PEER_PODS                   = "10"
 	peerpodConfigCrdName                = "peerpodconfig-openshift"
 	peerpodsMachineConfigPathLocation   = "/config/peerpods"
@@ -495,6 +499,28 @@ func getExtensionName() string {
 func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.MachineConfig, error) {
 	r.Log.Info("Creating MachineConfig for Custom Resource")
 
+	// Return ExistingMc if present
+
+	if r.ExistingMc != nil {
+		r.Log.Info("Using Existing MachineConfig")
+		return r.ExistingMc, nil
+	}
+
+	// Return ImgMc if present
+	if r.ImgMc != nil {
+		r.Log.Info("Using Image based MachineConfig")
+		// Add the required MachineConfig labels
+		r.ImgMc.Labels = map[string]string{
+			"machineconfiguration.openshift.io/role": machinePool,
+			"app":                                    r.kataConfig.Name,
+		}
+
+		r.Log.Info("Image based MachineConfig", "MachineConfig", r.ImgMc)
+
+		return r.ImgMc, nil
+	}
+
+	// Create extension MachineConfig
 	ic := ignTypes.Config{
 		Ignition: ignTypes.Ignition{
 			Version: "3.2.0",
@@ -528,6 +554,8 @@ func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.
 			},
 		},
 	}
+
+	r.Log.Info("Extension based MachineConfig", "MachineConfig", mc)
 
 	return &mc, nil
 }
@@ -856,6 +884,11 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 				"mc", mc.Name)
 		}
 	}
+
+	// Reset ExistingMc
+	r.ExistingMc = nil
+	// Reset ImgMc
+	r.ImgMc = nil
 
 	isConvergedCluster, _ := r.checkConvergedCluster()
 
@@ -1239,30 +1272,25 @@ func (r *KataConfigOpenShiftReconciler) createExtensionMc(machinePool string) (b
 	var dummy bool
 
 	/* Create Machine Config object to enable sandboxed containers RHCOS extension */
-	mc := &mcfgv1.MachineConfig{}
-	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: extension_mc_name}, mc)
-	if err != nil && (k8serrors.IsNotFound(err) || k8serrors.IsGone(err)) {
 
-		r.Log.Info("creating RHCOS extension MachineConfig")
-		mc, err = r.newMCForCR(machinePool)
-		if err != nil {
-			return dummy, err
-		}
-
-		err = r.Client.Create(context.TODO(), mc)
-		if err != nil {
-			r.Log.Error(err, "Failed to create a new MachineConfig ", "mc.Name", mc.Name)
-			return dummy, err
-		}
-		r.Log.Info("MachineConfig successfully created", "mc.Name", mc.Name)
-		return true, nil
-	} else if err != nil {
-		r.Log.Info("failed to retrieve extension MachineConfig", "err", err)
-		return dummy, err
-	} else {
-		r.Log.Info("extension MachineConfig already exists")
+	if r.ExistingMc != nil {
+		r.Log.Info("MachineConfig already exists")
 		return false, nil
 	}
+
+	r.Log.Info("creating RHCOS extension MachineConfig")
+	mc, err := r.newMCForCR(machinePool)
+	if err != nil {
+		return dummy, err
+	}
+
+	err = r.Client.Create(context.TODO(), mc)
+	if err != nil {
+		r.Log.Error(err, "Failed to create a new MachineConfig ", "mc.Name", mc.Name)
+		return dummy, err
+	}
+	r.Log.Info("MachineConfig successfully created", "mc.Name", mc.Name)
+	return true, nil
 }
 
 func (r *KataConfigOpenShiftReconciler) makeReconcileRequest() reconcile.Request {

@@ -10,13 +10,15 @@ import (
 )
 
 const (
-	TimeTravelFeatureGate = "timeTravel"
-	FgConfigMapName       = "osc-feature-gates"
-	OperatorNamespace     = "openshift-sandboxed-containers-operator"
+	TimeTravelFeatureGate  = "timeTravel"
+	LayeredImageDeployment = "layeredImageDeployment"
+	FgConfigMapName        = "osc-feature-gates"
+	OperatorNamespace      = "openshift-sandboxed-containers-operator"
 )
 
 var DefaultFeatureGates = map[string]bool{
-	"timeTravel": false,
+	"timeTravel":             false,
+	"layeredImageDeployment": false,
 }
 
 type FeatureGateStatus struct {
