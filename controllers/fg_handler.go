@@ -37,7 +37,15 @@ func (r *KataConfigOpenShiftReconciler) processFeatureGates() error {
 		r.handleTimeTravelFeature(Disabled)
 	}
 
-	return err
+	if featuregates.IsEnabled(fgStatus, featuregates.LayeredImageDeployment) {
+		r.Log.Info("Feature gate is enabled", "featuregate", featuregates.LayeredImageDeployment)
+		// Perform the necessary actions
+		return r.handleLayeredImageDeploymentFeature(Enabled)
+	} else {
+		r.Log.Info("Feature gate is disabled", "featuregate", featuregates.LayeredImageDeployment)
+		// Perform the necessary actions
+		return r.handleLayeredImageDeploymentFeature(Disabled)
+	}
 
 }
 
