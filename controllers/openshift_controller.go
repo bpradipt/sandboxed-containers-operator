@@ -1063,7 +1063,7 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 		r.Log.Info("SCNodeRole is: " + machinePool)
 	}
 
-	wasMcJustCreated, err := r.createExtensionMc(machinePool)
+	wasMcJustCreated, err := r.createMc(machinePool)
 	if err != nil {
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -1260,7 +1260,7 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 // If the first return value is 'true' it means that the MC was just created
 // by this call, 'false' means that it's already existed.  As usual, the first
 // return value is only valid if the second one is nil.
-func (r *KataConfigOpenShiftReconciler) createExtensionMc(machinePool string) (bool, error) {
+func (r *KataConfigOpenShiftReconciler) createMc(machinePool string) (bool, error) {
 
 	// In case we're returning an error we want to make it explicit that
 	// the first return value is "not care".  Unfortunately golang seems
@@ -1275,7 +1275,7 @@ func (r *KataConfigOpenShiftReconciler) createExtensionMc(machinePool string) (b
 		return false, nil
 	}
 
-	r.Log.Info("creating RHCOS extension MachineConfig")
+	r.Log.Info("creating RHCOS MachineConfig")
 	mc, err := r.newMCForCR(machinePool)
 	if err != nil {
 		return dummy, err
