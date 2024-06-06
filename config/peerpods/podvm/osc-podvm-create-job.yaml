@@ -53,7 +53,12 @@ spec:
           volumeMounts:
             - name: payload
               mountPath: /payload
+            - name: registry_secret
+              mountPath: /etc/containers/auth.json
       volumes:
         - name: payload
           emptyDir: {}
+        - name: registry_secret
+          secret:
+            secretName: registry-secret
       restartPolicy: Never

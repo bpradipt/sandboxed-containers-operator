@@ -22,6 +22,7 @@ function install_rpm_packages() {
         "git"
         "make"
         "unzip"
+        "podman"
     )
 
     # Create a new array to store rpm packages that are not installed
@@ -160,7 +161,11 @@ function prepare_source_code() {
     tar xvf /payload/podvm-binaries.tar.gz -C "${podvm_dir}"/files ||
         error_exit "Failed to download podvm binaries"
 
-    mkdir -p "${podvm_dir}"/files/pause_bundle # workaround to avoid pause image requirement
+    mkdir -p "${podvm_dir}"/files/pause_bundle
+
+    # Download and extract OCP pause image to the ${podvm_dir}"/files/pause_bundle directory
+    download_and_extract_pause_image "${podvm_dir}"/files/pause_bundle ||
+        error_exit "Failed to download and extract OCP pause image"
 
     # Set the NVIDIA_DRIVER_VERSION if variable is set
     if [[ "${NVIDIA_DRIVER_VERSION}" ]]; then
@@ -183,6 +188,33 @@ function prepare_source_code() {
     fi
 }
 
+# Function to download and extract the OCP pause image
+# Accepts three arguments:
+# 1. pause_bundle_dir: The directory where the pause image will be extracted
+# 2. pause_image_url: The URL of the OCP pause image.
+# 3. registry_secret: Path to the registry secret file to use for downloading the image
+function download_and_extract_pause_image() {
+    local pause_bundle_dir="${1}"
+    local pause_image_url="${2:-quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:ac97982e845413b2b73771711b4c85d2b2cfda174e8251e3049d4843cea40e1}"
+    local registry_secret="${3:-/etc/containers/auth.json}"
+
+    # Create a temp container using podman to create the file system
+    # Then extract the container image to a tar file
+    podman --authfile "$registry_secret" create --name pause_image "${pause_image_url}" ||
+        error_exit "Failed to create the pause image container"
+
+    podman export pause_image >/tmp/pause_image.tar.gz ||
+        error_exit "Failed to export the pause image container"
+    podman rm pause_image ||
+        error_exit "Failed to remove the pause image container"
+
+    # Extract the tar file to the specified directory
+    tar -xzf /tmp/pause_image.tar.gz -C "${pause_bundle_dir}" ||
+        error_exit "Failed to extract the pause image tar file"
+
+    # Clean up the downloaded file
+    rm -f /tmp/pause_image.tar.gz
+}
 # Global variables
 
 # Set global variable for the source code directory
