@@ -1006,9 +1006,12 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 
 		case ImageDeletionFailed:
 			r.setInProgressConditionToPodVMImageDeletionFailed()
+			if err != nil {
+				// We requeue only if there is an error.
+				return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, err
+			}
 			// If there's no error, log and continue
 			r.Log.Info("Image deletion failed. Check logs for more details")
-			return reconcile.Result{}, err
 
 		case ImageDeletionStatusUnknown:
 			r.setInProgressConditionToPodVMImageDeletionUnknown()
@@ -1262,9 +1265,12 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigInstallRequest() (ctrl.
 
 			case ImageCreationFailed:
 				r.setInProgressConditionToPodVMImageCreationFailed()
+				if err != nil {
+					// We requeue only if there is an error.
+					return ctrl.Result{Requeue: true, RequeueAfter: 15 * time.Second}, err
+				}
 				// If there's no error, log and continue
 				r.Log.Info("Image creation failed. Check logs for more details")
-				return ctrl.Result{}, err
 
 			case ImageCreationStatusUnknown:
 				r.setInProgressConditionToPodVMImageCreationUnknown()
