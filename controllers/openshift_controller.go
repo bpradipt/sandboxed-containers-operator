@@ -61,9 +61,6 @@ type KataConfigOpenShiftReconciler struct {
 	Scheme *runtime.Scheme
 
 	kataConfig *kataconfigurationv1.KataConfig
-
-	ImgMc      *mcfgv1.MachineConfig
-	ExistingMc *mcfgv1.MachineConfig
 }
 
 const (
@@ -498,26 +495,22 @@ func getExtensionName() string {
 func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.MachineConfig, error) {
 	r.Log.Info("Creating MachineConfig for Custom Resource")
 
-	// Return ExistingMc if present
-
-	if r.ExistingMc != nil {
-		r.Log.Info("Using Existing MachineConfig")
-		return r.ExistingMc, nil
-	}
-
 	// Return ImgMc if present
-	if r.ImgMc != nil {
+	mc := r.getImageMc()
+	if mc != nil {
 		r.Log.Info("Using Image based MachineConfig")
 		// Add the required MachineConfig labels
-		r.ImgMc.Labels = map[string]string{
+		mc.Labels = map[string]string{
 			"machineconfiguration.openshift.io/role": machinePool,
 			"app":                                    r.kataConfig.Name,
 		}
 
-		r.Log.Info("Image based MachineConfig", "MachineConfig", r.ImgMc)
+		r.Log.Info("Image based MachineConfig", "MachineConfig", mc)
 
-		return r.ImgMc, nil
+		return mc, nil
 	}
+
+	r.Log.Info("Using Extension based MachineConfig")
 
 	// Create extension MachineConfig
 	ic := ignTypes.Config{
@@ -533,7 +526,7 @@ func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.
 
 	extension := getExtensionName()
 
-	mc := mcfgv1.MachineConfig{
+	mc = &mcfgv1.MachineConfig{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "machineconfiguration.openshift.io/v1",
 			Kind:       "MachineConfig",
@@ -556,7 +549,7 @@ func (r *KataConfigOpenShiftReconciler) newMCForCR(machinePool string) (*mcfgv1.
 
 	r.Log.Info("Extension based MachineConfig", "MachineConfig", mc)
 
-	return &mc, nil
+	return mc, nil
 }
 
 func (r *KataConfigOpenShiftReconciler) addFinalizer() error {
@@ -883,11 +876,6 @@ func (r *KataConfigOpenShiftReconciler) processKataConfigDeleteRequest() (ctrl.R
 				"mc", mc.Name)
 		}
 	}
-
-	// Reset ExistingMc
-	r.ExistingMc = nil
-	// Reset ImgMc
-	r.ImgMc = nil
 
 	isConvergedCluster, _ := r.checkConvergedCluster()
 
@@ -1316,24 +1304,30 @@ func (r *KataConfigOpenShiftReconciler) createMc(machinePool string) (bool, erro
 
 	/* Create Machine Config object to install sandboxed containers */
 
-	if r.ExistingMc != nil {
-		r.Log.Info("MachineConfig already exists")
-		return false, nil
-	}
-
 	r.Log.Info("creating RHCOS MachineConfig")
 	mc, err := r.newMCForCR(machinePool)
 	if err != nil {
 		return dummy, err
 	}
 
-	err = r.Client.Create(context.TODO(), mc)
-	if err != nil {
-		r.Log.Error(err, "Failed to create a new MachineConfig ", "mc.Name", mc.Name)
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: mc.Name}, mc)
+	if err != nil && (k8serrors.IsNotFound(err) || k8serrors.IsGone(err)) {
+
+		err = r.Client.Create(context.TODO(), mc)
+		if err != nil {
+			r.Log.Error(err, "Failed to create a new MachineConfig ", "mc.Name", mc.Name)
+			return dummy, err
+		}
+		r.Log.Info("MachineConfig successfully created", "mc.Name", mc.Name)
+		return true, nil
+	} else if err != nil {
+		r.Log.Info("failed to retrieve MachineConfig", "err", err)
 		return dummy, err
+	} else {
+		r.Log.Info("MachineConfig already exists")
+		return false, nil
 	}
-	r.Log.Info("MachineConfig successfully created", "mc.Name", mc.Name)
-	return true, nil
+
 }
 
 func (r *KataConfigOpenShiftReconciler) makeReconcileRequest() reconcile.Request {

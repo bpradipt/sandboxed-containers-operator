@@ -18,6 +18,9 @@ const (
 	LayeredImageDeployCm = "layered-image-deploy-cm"
 )
 
+// Global struct to store the Image based MachineConfig struct
+var ImgMc *mcfgv1.MachineConfig
+
 func (r *KataConfigOpenShiftReconciler) handleLayeredImageDeploymentFeature(state FeatureGateState) error {
 
 	// Check if MachineConfig exists and return the same without changing anything
@@ -29,7 +32,10 @@ func (r *KataConfigOpenShiftReconciler) handleLayeredImageDeploymentFeature(stat
 
 	if mc != nil {
 		r.Log.Info("MachineConfig is already present. No changes will be done")
-		r.ExistingMc = mc
+		// If the MachineConfig is imageMachineConfig, then set the global variable ImgMc
+		if mc.Name == image_mc_name {
+			ImgMc = mc
+		}
 		return nil
 	}
 
@@ -46,17 +52,17 @@ func (r *KataConfigOpenShiftReconciler) handleLayeredImageDeploymentFeature(stat
 			return err
 		}
 
-		mc, err := r.createMachineConfigFromConfigMap(cm)
+		ImgMc, err = r.createMachineConfigFromConfigMap(cm)
 		if err != nil {
 			r.Log.Info("Error in creating MachineConfig for LayeredImageDeployment from ConfigMap", "err", err)
 			return err
 		}
 
-		r.ImgMc = mc
 	} else {
 		r.Log.Info("LayeredImageDeployment feature is disabled. Resetting ImgMc")
 		// Reset ImgMc
-		r.ImgMc = nil
+		ImgMc = nil
+
 	}
 
 	return nil
@@ -135,4 +141,9 @@ func (r *KataConfigOpenShiftReconciler) createMachineConfigFromConfigMap(cm *cor
 	}
 
 	return mc, nil
+}
+
+// Method to retrieve Image MachineConfig from the cluster
+func (r *KataConfigOpenShiftReconciler) getImageMc() *mcfgv1.MachineConfig {
+	return ImgMc
 }
