@@ -198,8 +198,12 @@ function prepare_source_code() {
 
     if [[ "$CONFIDENTIAL_COMPUTE_ENABLED" == "yes" ]]; then
         sed 's/default SetPolicyRequest := true/default SetPolicyRequest := false/; s/default ExecProcessRequest := true/default ExecProcessRequest := false/' \
-            "${podvm_dir}"/files/etc/kata-opa/default-policy.rego > "${podvm_dir}"/files/etc/kata-opa/coco-default-policy.rego
-        ln -sf "${podvm_dir}"/files/etc/kata-opa/coco-default-policy.rego  "${podvm_dir}"/files/etc/kata-opa/default-policy.rego
+            "${podvm_dir}"/files/etc/kata-opa/default-policy.rego >"${podvm_dir}"/files/etc/kata-opa/coco-default-policy.rego
+        ln -sf "${podvm_dir}"/files/etc/kata-opa/coco-default-policy.rego "${podvm_dir}"/files/etc/kata-opa/default-policy.rego
+
+        # Remove the root disk mounts from the podvm
+        rm -f "${podvm_dir}"/files/etc/systemd/system/{run-image,run-kata\\x2dcontainers}.mount
+        rm -f "${podvm_dir}"/files/etc/systemd/system/multi-user.target.wants/{run-image,run-kata\\x2dcontainers}.mount
     fi
 }
 
