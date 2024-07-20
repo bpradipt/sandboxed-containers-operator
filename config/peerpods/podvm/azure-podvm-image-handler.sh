@@ -501,6 +501,9 @@ function create_image() {
     # Prepare the pause image for embedding into the image
     download_and_extract_pause_image "${PAUSE_IMAGE_REPO}" "${PAUSE_IMAGE_VERSION}" "${PAUSE_IMAGE_REPO_AUTH_FILE}"
 
+    # Download and embed additional container image
+    download_and_extract_container_image "${CONTAINER_IMAGE_REPO}" "${CONTAINER_IMAGE_VERSION}" "${CONTAINER_IMAGE_REPO_AUTH_FILE}"
+
     # Create Azure image using packer
     create_image_using_packer
 

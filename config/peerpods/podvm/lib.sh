@@ -250,6 +250,96 @@ function download_and_extract_pause_image() {
 
 }
 
+# Download and extract container image
+# Accepts three arguments:
+# 1. image_repo_url: The registry URL of the container image
+# 2. image_tag: The tag of the OCP pause image.
+# 2. auth_json_file (optional): Path to the registry secret file to use for downloading the image
+# Ensure you have sufficient disk space based on the image size
+function download_and_extract_container_image() {
+
+    local image_repo_url="${1}"
+    local image_tag="${2}"
+    local auth_json_file="${3}"
+
+    # If arguments are not provided, return from the scrip by displaying a messaeg
+    # No need to exit here as it's an optional step
+    [[ $# -lt 2 ]] &&
+        echo "Usage: download_and_extract_container_image <image_repo_url> <image_tag> [registry_secret]" &&
+        return
+
+    # Ensure CAA_SRC_DIR is set
+    [[ -z "${CAA_SRC_DIR}" ]] && error_exit "CAA_SRC_DIR is not set"
+
+    local podvm_dir="${CAA_SRC_DIR}/podvm"
+    local image_src="tmp/image"
+    local tmp_umoci_dir="tmp/umoci"
+    local image_bundle="${podvm_dir}/files/image_bundle"
+
+    # Create the local directories
+    # We don't need to create the image_src directory as it will be created by skopeo
+    mkdir -p "${tmp_umoci_dir}" ||
+        error_exit "Failed to create the tmp_umoci_dir directory"
+
+    mkdir -p "${image_bundle}" ||
+        error_exit "Failed to create the image_bundle directory"
+
+    # Form the skopeo CLI. Add authfile if provided
+    # Need to use remove-signatures to avoid the error "Pushing signatures for OCI images is not supported"
+    if [[ -n "${3}" ]]; then
+        SKOPEO_CLI="skopeo copy --remove-signatures --authfile ${auth_json_file}"
+    else
+        SKOPEO_CLI="skopeo copy --remove-signatures"
+    fi
+
+    # Download the container image
+    $SKOPEO_CLI "docker://${image_repo_url}:${image_tag}" "oci:${image_src}:${image_tag}" ||
+        error_exit "Failed to download the container image"
+
+    # Get the sha256 digest of the image
+    # This will return a digest in the format "sha256:<sha256_digest>"
+    IMG_DIGEST=$(skopeo inspect "docker://${image_repo_url}:${image_tag}" | jq '.Layers[0]')
+
+    # Exit if IMG_DIGEST is empty or null string
+    [[ -z "${IMG_DIGEST}" || "${IMG_DIGEST}" = "null" ]] &&
+        error_exit "Failed to get the sha256 digest of the image"
+
+    # Extract the container image using umoci into tmp_umoci_dir directory
+    umoci unpack --rootless --image "${image_src}:${image_tag}" "${tmp_umoci_dir}" ||
+        error_exit "Failed to extract the container image"
+
+    # Umoci will unpack the image in the directory with the following layout
+    # tmp_umoci_dir/
+    #  rootfs/{contents of the imaeg}
+    #  config.json
+    #  sha256_37c2d799d171fd236053c5b72978cd60449bf1fd9a471799d1f2cb82dc6088a6.mtree
+    #  umoci.json
+
+    # We need to copy the rootfs directory to the image_bundle directory in the following format
+    # image_bundle/
+    #   sha256_<sha256_digest>/{contents of the layer}
+
+    # Remove quotes in the IMG_DIGEST and replace : with _
+    IMG_DIGEST=$(echo "${IMG_DIGEST}" | tr -d '"')
+    IMG_DIGEST=$(echo "${IMG_DIGEST}" | tr ':' '_')
+
+    # Create dir and copy the rootfs
+    mkdir -p "${image_bundle}/${IMG_DIGEST}" ||
+        error_exit "Failed to create the image_bundle directory"
+
+    cp -a "${tmp_umoci_dir}"/rootfs/* "${image_bundle}/${IMG_DIGEST}" ||
+        error_exit "Failed to copy the image to the image_bundle directory"
+
+    # Cleanup the tmp directories
+    rm -rf "${image_src}" "${tmp_umoci_dir}"
+
+    # Display the contents of the image_bundle directory
+    ls -l "${image_bundle}"
+
+    echo "Image extracted successfully and available in ${image_bundle}"
+
+}
+
 # Global variables
 
 # Set global variable for the source code directory
