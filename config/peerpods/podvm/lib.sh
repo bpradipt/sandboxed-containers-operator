@@ -273,13 +273,8 @@ function download_and_extract_container_image() {
 
     local podvm_dir="${CAA_SRC_DIR}/podvm"
     local image_src="tmp/image"
-    local tmp_umoci_dir="tmp/umoci"
-    local image_bundle="${podvm_dir}/files/image_bundle"
 
-    # Create the local directories
-    # We don't need to create the image_src directory as it will be created by skopeo
-    mkdir -p "${tmp_umoci_dir}" ||
-        error_exit "Failed to create the tmp_umoci_dir directory"
+    local image_bundle="${podvm_dir}/files/image_bundle"
 
     mkdir -p "${image_bundle}" ||
         error_exit "Failed to create the image_bundle directory"
@@ -293,45 +288,54 @@ function download_and_extract_container_image() {
     fi
 
     # Download the container image
+    # This will copy the image to the image_src directory
+    # ${image_src}/blobs/sha256 will contain the image layers
+    # The layer names will be digest of the layer
+    # eg
+    # 3713021b02770a720dea9b54c03d0ed83e03a2ef5dce2898c56a327fee9a8bca
+    # f634e1e7c42bc521c6a76ee114dadd709143cd4d66832806ac7b9503669d4752
+    # These are tar archives of the layer contents
     $SKOPEO_CLI "docker://${image_repo_url}:${image_tag}" "oci:${image_src}:${image_tag}" ||
         error_exit "Failed to download the container image"
 
-    # Get the sha256 digest of the image
+    # Get the sha256 digests of the image.
     # This will return a digest in the format "sha256:<sha256_digest>"
-    IMG_DIGEST=$(skopeo inspect "docker://${image_repo_url}:${image_tag}" | jq '.Layers[0]')
+    # This will be an array
+    IMG_DIGEST=$(skopeo inspect "docker://${image_repo_url}:${image_tag}" | jq '.Layers')
 
     # Exit if IMG_DIGEST is empty or null string
     [[ -z "${IMG_DIGEST}" || "${IMG_DIGEST}" = "null" ]] &&
         error_exit "Failed to get the sha256 digest of the image"
 
-    # Extract the container image using umoci into tmp_umoci_dir directory
-    umoci unpack --rootless --image "${image_src}:${image_tag}" "${tmp_umoci_dir}" ||
-        error_exit "Failed to extract the container image"
-
-    # Umoci will unpack the image in the directory with the following layout
-    # tmp_umoci_dir/
-    #  rootfs/{contents of the imaeg}
-    #  config.json
-    #  sha256_37c2d799d171fd236053c5b72978cd60449bf1fd9a471799d1f2cb82dc6088a6.mtree
-    #  umoci.json
-
     # We need to copy the rootfs directory to the image_bundle directory in the following format
     # image_bundle/
     #   sha256_<sha256_digest>/{contents of the layer}
 
+    # for each entry in the IMG_DIGEST array do the following
     # Remove quotes in the IMG_DIGEST and replace : with _
-    IMG_DIGEST=$(echo "${IMG_DIGEST}" | tr -d '"')
-    IMG_DIGEST=$(echo "${IMG_DIGEST}" | tr ':' '_')
+    # Create dir ${image_bundle}/${IMG_DIGEST}, extract and copy the layer contents to it
+    # tar xvf ${image_src}/blobs/sha256/<sha256_digest> -C ${image_bundle}/${IMG_DIGEST}
 
-    # Create dir and copy the rootfs
-    mkdir -p "${image_bundle}/${IMG_DIGEST}" ||
-        error_exit "Failed to create the image_bundle directory"
+    for i in $(echo "${IMG_DIGEST}" | jq -r '.[]'); do
+        # The entry will be of the form sha256:<sha256_digest>
 
-    cp -a "${tmp_umoci_dir}"/rootfs/* "${image_bundle}/${IMG_DIGEST}" ||
-        error_exit "Failed to copy the image to the image_bundle directory"
+        # Create the image_bundle/sha256_<sha256_digest> directory
+        layer_dir="${image_bundle}/${i/:/_}"
+        mkdir -p "${layer_dir}" ||
+            error_exit "Failed to create the ${layer_dir} directory"
+
+        # Extract the sha256_digest
+        i=$(echo "${i}" | cut -d ':' -f 2)
+
+        # Extract the layer contents
+        # We ignore the error here as we want to continue with the extraction
+        # even if one of the layers fails to extract
+        tar xvf "${image_src}/blobs/sha256/${i}" -C "${layer_dir}" ||
+            echo "Failed to extract the layer contents for blob ${i}"
+    done
 
     # Cleanup the tmp directories
-    rm -rf "${image_src}" "${tmp_umoci_dir}"
+    rm -rf "${image_src}"
 
     # Display the contents of the image_bundle directory
     ls -l "${image_bundle}"
