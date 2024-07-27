@@ -226,6 +226,9 @@ function prepare_source_code() {
         remove_mount_units
         create_overlay_mount_unit
 
+        # Disable sshd service for CoCo
+        disable_sshd_service
+
     fi
     echo "~~~ Current Agent Policy ~~~" && cat "${podvm_dir}"/files/etc/kata-opa/default-policy.rego
 }
@@ -318,6 +321,17 @@ EOF
     ln -sf ../"${unit_name}" "${podvm_dir}/files/etc/systemd/system/multi-user.target.wants/${unit_name}" ||
         error_exit "Failed to enable the overlay mount unit"
 
+}
+
+# Function to disable sshd service in the podvm files
+function disable_sshd_service() {
+    local file_path="${podvm_dir}"/qcow2/misc-settings.sh
+
+    # Disable sshd service by updating misc-settings.sh
+    # This script runs when generating the podvm image
+    sed -i '/systemctl disable firewalld.service/a\        systemctl disable sshd.service' "$file_path"
+
+    echo "Added 'systemctl disable sshd.service' in $file_path"
 }
 
 # Global variables
