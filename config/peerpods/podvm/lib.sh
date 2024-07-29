@@ -227,6 +227,7 @@ function prepare_source_code() {
     # Fix disk mounts for CoCo
     if [[ "$CONFIDENTIAL_COMPUTE_ENABLED" == "yes" ]]; then
         create_overlay_mount_unit
+        disable_sshd_service
     fi
 
 }
@@ -302,6 +303,22 @@ EOF
     ln -sf ../"${unit_name}" "${podvm_dir}/files/etc/systemd/system/multi-user.target.wants/${unit_name}" ||
         error_exit "Failed to enable the overlay mount unit"
 
+}
+
+# Function to disable sshd systemd services in the podvm files
+# Uses preset files to disable the service
+function disable_sshd_service() {
+    # Disable sshd service by creating a systemd preset
+    # Ref: https://www.freedesktop.org/software/systemd/man/latest/systemd.preset.html
+    mkdir -p "${podvm_dir}"/files/etc/systemd/system-preset
+
+    # Disable sshd service from preset
+    echo "disable sshd.service" >>"${podvm_dir}"/files/etc/systemd/system-preset/00-podvm.preset
+
+    # Disable sshd service
+    local file_path="${podvm_dir}"/qcow2/misc-settings.sh
+    # Add disabe sshd.service to the script that runs when generating the podvm image
+    sed -i '/rhel)/a\        systemctl disable sshd.service' "$file_path"
 }
 
 # Global variables
