@@ -33,10 +33,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -53,6 +56,7 @@ import (
 	peerpod "github.com/confidential-containers/cloud-api-adaptor/src/peerpod-ctrl/api/v1alpha1"
 	peerpodconfig "github.com/confidential-containers/cloud-api-adaptor/src/peerpodconfig-ctrl/api/v1alpha1"
 	ccov1 "github.com/openshift/cloud-credential-operator/pkg/apis/cloudcredential/v1"
+	operatorsapiv2 "github.com/operator-framework/api/pkg/operators/v2"
 
 	kataconfigurationv1 "github.com/openshift/sandboxed-containers-operator/api/v1"
 	"github.com/openshift/sandboxed-containers-operator/controllers"
@@ -67,6 +71,12 @@ var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 )
+
+// Struct to hold config status for KataConfig
+type ConfigStatus struct {
+	Exists         bool
+	EnablePeerPods bool
+}
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -86,6 +96,8 @@ func init() {
 	utilruntime.Must(configv1.AddToScheme(scheme))
 
 	utilruntime.Must(ccov1.AddToScheme(scheme))
+
+	utilruntime.Must(operatorsapiv2.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -105,6 +117,24 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true), SetTimeEncoderToRfc3339()))
+
+	// Get a config to talk to the apiserver
+	cfg, err := config.GetConfig()
+	if err != nil {
+		setupLog.Error(err, "unable to get kubeconfig")
+		os.Exit(1)
+	}
+
+	// apiclient.New() returns a client without cache.
+	// cache is not initialized before mgr.Start()
+	// we need this because we need to interact with OperatorCondition
+	apiClient, err := client.New(cfg, client.Options{
+		Scheme: scheme,
+	})
+	if err != nil {
+		setupLog.Error(err, "unable to create apiclient")
+		os.Exit(1)
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:  scheme,
@@ -143,6 +173,47 @@ func main() {
 		}
 
 		setupLog.Info("added labels")
+
+		/*
+			// Get KataConfig status
+			configStatus, err := getKataConfig(context.TODO(), mgr)
+			if err != nil {
+				setupLog.Error(err, "unable to get KataConfig")
+				os.Exit(1)
+			}
+
+			setupLog.Info("KataConfig status", "Exists", configStatus.Exists, "EnablePeerPods", configStatus.EnablePeerPods)
+		*/
+
+		setupLog.Info("Setting OperatorCondition.")
+
+		upgradeableCondition, err := controllers.NewOperatorCondition(apiClient, operatorsapiv2.Upgradeable)
+		if err != nil {
+			setupLog.Error(err, "Cannot create the Upgradeable Operator Condition")
+			os.Exit(1)
+		}
+
+		err = wait.ExponentialBackoff(retry.DefaultRetry, func() (bool, error) {
+			err := upgradeableCondition.Set(context.TODO(), metav1.ConditionFalse, controllers.UpgradeableDisableReason,
+				controllers.UpgradeableDisableMessage)
+			if err != nil {
+				setupLog.Error(err, "Cannot set the status of the Upgradeable Operator Condition")
+			}
+			return err == nil, nil
+		})
+		if err != nil {
+			setupLog.Error(err, "Cannot set the status of the Upgradeable Operator Condition")
+			os.Exit(1)
+		}
+
+		/*
+			// re-create the condition, this time with the final client
+			upgradeableCondition, err = controllers.NewOperatorCondition(mgr.GetClient(), operatorsapiv2.Upgradeable)
+			if err != nil {
+				setupLog.Error(err, "Cannot create the Upgradeable Operator Condition")
+				os.Exit(1)
+			}
+		*/
 
 		if err = (&controllers.KataConfigOpenShiftReconciler{
 			Client: mgr.GetClient(),
@@ -244,3 +315,35 @@ func labelNamespace(ctx context.Context, mgr manager.Manager) error {
 
 	return mgr.GetClient().Update(ctx, ns)
 }
+
+// Retrieve KataConfig and update ConfigStatus
+func getKataConfig(ctx context.Context, mgr manager.Manager) (ConfigStatus, error) {
+	configStatus := ConfigStatus{}
+
+	kataConfig := &kataconfigurationv1.KataConfig{}
+	err := mgr.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(kataConfig), kataConfig)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			// KataConfig CRD does not exist
+			configStatus.Exists = false
+			setupLog.Info("KataConfig CRD does not exist")
+			return configStatus, nil
+		}
+		return configStatus, err
+	}
+
+	configStatus.Exists = true
+	configStatus.EnablePeerPods = kataConfig.Spec.EnablePeerPods
+
+	setupLog.Info("ConfigStatus", "KataConfig", configStatus.Exists, "EnablePeerPods", configStatus.EnablePeerPods)
+	return configStatus, nil
+}
+
+// Retrieve OpenShift version
+func getOpenShiftVersion(ctx context.Context, mgr manager.Manager) (string, error) {
+
+	setupLog.Info("GetOpenShiftVersion")
+	return "", nil
+}
+
+// Create OperatorStatus condition
