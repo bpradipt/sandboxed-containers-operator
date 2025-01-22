@@ -1,0 +1,11 @@
+[CentOS9-baseos]
+name=CentOS BaseOS
+baseurl=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/
+gpgcheck=0
+enabled=1
+
+[CentOS9-appstream]
+name=CentOS AppStream
+baseurl=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/
+gpgcheck=0
+enabled=1

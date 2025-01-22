@@ -1,0 +1,31 @@
+# Use 4.16 as the base
+# 4.6.11 release image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:31feb7503f06db4023350e3d9bb3cfda661cc81ff21cef429770fb12ae878636
+
+ARG OCP_RELEASE_IMAGE
+
+FROM $OCP_RELEASE_IMAGE
+
+ARG KATA_RELEASE_VERSION=3.13.0
+
+WORKDIR /
+
+# Install upstream Kata bits
+RUN curl -LO https://github.com/kata-containers/kata-containers/releases/download/${KATA_RELEASE_VERSION}/kata-static-${KATA_RELEASE_VERSION}-amd64.tar.xz && \
+    mkdir -p /var/opt && \
+    tar xvf kata-static-${KATA_RELEASE_VERSION}-amd64.tar.xz --strip-components=2 -C /opt && \
+    mv /opt/kata /usr/kata && \
+    echo 'd /var/opt 755 root root -' >> /usr/lib/tmpfiles.d/kata.conf && \
+    echo 'L+ /opt/kata - - - - /usr/kata' >> /usr/lib/tmpfiles.d/kata.conf
+
+
+COPY standard/crio.conf.d/ /etc/crio/crio.conf.d/
+
+# Selinux adjustments for monitor daemonset
+COPY snp/osc_monitor.cil /etc/kata-containers/osc_monitor.cil
+RUN semodule -i  /etc/kata-containers/osc_monitor.cil
+
+# Selinux adjustments to provide access to sev
+RUN setsebool -P container_use_devices 1
+
+RUN rpm-ostree cleanup -m && \
+    ostree container commit

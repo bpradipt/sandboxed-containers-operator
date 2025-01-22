@@ -1,0 +1,27 @@
+# Use 4.16 as the base
+# 4.6.11 release image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:31feb7503f06db4023350e3d9bb3cfda661cc81ff21cef429770fb12ae878636
+
+ARG OCP_RELEASE_IMAGE
+
+FROM $OCP_RELEASE_IMAGE
+
+COPY tdx/centos-tdx.repo /etc/yum.repos.d
+COPY tdx/kata-containers-tdx.repo /etc/yum.repos.d
+COPY tdx/kata-containers-tdx-repo.tar.xz /tmp
+
+# Extract the kata-containers local RPM repo
+RUN mkdir -p /var/cache/kata-containers-tdx-repo && \
+    tar xvJpf /tmp/kata-containers-tdx-repo.tar.xz -C /var/cache/kata-containers-tdx-repo/
+
+# Replace libibverbs for qemu-kvm-tdx. The RHCOS version is libibverbs-48 
+RUN rpm-ostree override replace https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/Packages/libibverbs-46.0-1.el9.x86_64.rpm
+RUN rpm-ostree install numactl-libs qemu-kvm-tdx
+
+#Install CentOS stream kernel
+RUN rpm-ostree override replace https://mirror.stream.centos.org/SIGs/9-stream/virt/x86_64/tdx-devel/Packages/k/kernel-{,core-,modules-,modules-core-,modules-extra-}5.14.0-480.el9s.x86_64.rpm
+
+# Install Kata Containers
+RUN rpm-ostree install kata-containers
+
+RUN rpm-ostree cleanup -m && \
+    ostree container commit

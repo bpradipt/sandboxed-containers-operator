@@ -1,0 +1,9 @@
+[crio.runtime.runtimes.kata]
+runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
+runtime_type = "vm"
+runtime_root = "/run/vc"
+runtime_config_path = "/opt/kata/share/defaults/kata-containers/configuration-qemu.toml"
+privileged_without_host_devices = true
+allowed_annotations = [
+  "io.kubernetes.cri-o.Devices",
+]
