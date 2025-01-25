@@ -9,11 +9,12 @@ install. For example, you can set "coco_bm=true" on the target nodes.
 The deployment sequence is described below:
 
 ```text
-1. Label target nodes and set BM_NODE_LABEL env variable (eg. BM_NODE_LABEL="coco_bm=true")
+1. If using SNO or converged OpenShift cluster, then label at least one worker node and 
+  set BM_NODE_LABEL env variable to the specific label (eg. BM_NODE_LABEL="coco_bm=true")
 2. Deploy OSC operator
-3. Create Kataconfig to install the RHCOS image layer on the nodes with BM_NODE_LABEL. 
+3. Create Kataconfig to install the RHCOS image layer.
    If using SNO or converged OpenShift then the RHCOS image layer will be installed
-   on all the nodes.
+   on all the (master) nodes.
 4. Deploy NFD operator
 5. Verify if the target nodes have SNP or TDX capabilities
 6. Deploy other prerequisites (eg DCAP for TDX)
@@ -55,10 +56,19 @@ The deployment sequence is described below:
 
 - Update `startingCSV` key in the `subs-ga.yaml` file to use the GA release you need.
 
+- If not using SNO or converged cluster then label at least a single worker node for deployment
+  and export the label via the 1BM_NODE_LABEL1 env variable
+  
+  ```sh
+  export NODENAME=<node>
+  oc label $NODE_NAME coco_bm=true
+  export BM_NODE_LABEL="coco_bm=true"
+  ```
+
 - Kickstart the installation by running the following:
 
 > Depending on the time it takes for the nodes to reboot, sometimes the commands may timeout.
-> You can use a higher timeout eg. export CMD_TIMEOUT=1200
+> You can use a higher timeout eg. export CMD_TIMEOUT=3000
 > or you can re-run the script to complete the installation.
 
   For TDX hosts:
