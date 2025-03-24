@@ -536,9 +536,11 @@ function ami_exists() {
         error_exit "Error querying AWS for AMI."
     fi
 
-    # Case 1: AMI exists and matches the configmap
-    if [[ "${ami_id}" == "${latest_ami_id}" ]]; then
-        echo "AMI (${ami_id}) is up-to-date in configmap."
+    # Case 1: AMI exists and matches the configmap.
+    # In AWS ami_id will be empty if AMI doesn't exist. Unlike Azure which returns an error
+    # So we need to additionally check that ami_id is not empty
+    if [[ -n "${ami_id}" && -n "${latest_ami_id}" && "${ami_id}" == "${latest_ami_id}" ]]; then
+        echo "AMI (${ami_id}) is up-to-date in AWS and configmap."
         return 0
     # Case 2: No AMI in AWS and no record in the configmap
     elif [[ -z "${ami_id}" && -z "${latest_ami_id}" ]]; then
